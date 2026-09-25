@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -65,7 +64,7 @@
   .toolbar {
     position: sticky; top: 0; background: var(--bg); padding: 0.8rem 0;
     display: flex; justify-content: center; flex-wrap: wrap; gap: 0.6rem;
-    border-bottom: 1px solid var(--border); margin-bottom: 1.6rem; z-index: 10;
+    border-bottom: 1px solid var(--border); margin-bottom: 1rem; z-index: 10;
   }
   .toolbar button {
     font-family: inherit; font-size: 0.76rem; letter-spacing: 0.05em; background: none;
@@ -75,6 +74,17 @@
   .toolbar button.danger { border-color: #b5665a; color: #b5665a; }
   .toolbar button.danger:active { background: #b5665a; color: #fff; }
   .toolbar button.back { margin-right: auto; }
+
+  .tab-nav {
+    display: flex; gap: 0.5rem; justify-content: center; margin: 0 0 1.8rem;
+  }
+  .tab-nav button {
+    flex: 1; max-width: 220px; font-family: inherit; font-size: 0.82rem; letter-spacing: 0.04em;
+    background: none; border: 1px solid var(--border); color: var(--sub);
+    padding: 0.6rem 0.4rem; border-radius: 6px; cursor: pointer;
+  }
+  .tab-nav button.active { border-color: var(--gold); color: var(--gold); background: rgba(138,109,61,0.06); }
+
   footer { text-align: center; font-size: 0.72rem; color: var(--sub); letter-spacing: 0.05em; margin-top: 3rem; }
   #screen-list .intro { font-size: 0.8rem; color: var(--sub); text-align: center; margin: 0 0 1.8rem; }
   .shrine-card {
@@ -84,6 +94,11 @@
   .shrine-card .name { font-size: 1.02rem; margin-bottom: 0.4rem; }
   .shrine-card .name.empty { color: var(--sub); }
   .shrine-card .meta { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--sub); margin-bottom: 0.5rem; }
+  .shrine-card .tags { display: flex; gap: 0.4rem; margin-bottom: 0.5rem; }
+  .shrine-card .tag {
+    font-size: 0.66rem; color: var(--gold); border: 1px solid var(--gold-line);
+    border-radius: 999px; padding: 0.1rem 0.6rem; letter-spacing: 0.03em;
+  }
   .progress-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
   .progress-bar > span { display: block; height: 100%; background: var(--gold); }
   .empty-state { text-align: center; color: var(--sub); font-size: 0.85rem; padding: 2.5rem 1rem; border: 1px dashed var(--border); border-radius: 6px; }
@@ -93,19 +108,52 @@
   }
   .add-button:active { background: rgba(138,109,61,0.08); }
   .hidden { display: none !important; }
-  .save-hint { text-align: center; font-size: 0.7rem; color: var(--sub); margin-top: -1rem; margin-bottom: 1.6rem; min-height: 1em; }
+  .save-hint { text-align: center; font-size: 0.7rem; color: var(--sub); margin-top: -0.5rem; margin-bottom: 1.6rem; min-height: 1em; }
   .storage-warning {
     background: #fdf3ee; border: 1px solid #e3c8bb; color: #8a4a34;
     font-size: 0.78rem; padding: 0.9rem 1rem; border-radius: 6px; margin-bottom: 1.6rem;
   }
+
+  /* ---- 現地記録タブ用のフィールド類 ---- */
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem 1rem; margin-bottom: 0.4rem; }
+  .meta-grid .full { grid-column: 1 / -1; }
+  .field label, .note-field label {
+    display: block; font-size: 0.72rem; color: var(--sub); letter-spacing: 0.05em; margin-bottom: 0.3rem;
+  }
+  .field input[type="text"], .field input[type="date"],
+  .note-field input[type="text"], .note-field textarea {
+    width: 100%; border: none; border-bottom: 1px solid var(--gold-line);
+    background: transparent; font-family: inherit; font-size: 0.92rem; color: var(--ink);
+    padding: 0.35rem 0.1rem; outline: none;
+  }
+  .note-field textarea {
+    border: 1px solid var(--border); border-radius: 4px; background: #fff;
+    padding: 0.6rem 0.7rem; resize: vertical; min-height: 3.4rem;
+  }
+  .note-field { margin-bottom: 1.1rem; }
+  .pill-group { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.3rem; }
+  .pill-group label {
+    display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--ink);
+    border: 1px solid var(--border); border-radius: 999px; padding: 0.35rem 0.8rem; cursor: pointer;
+  }
+  .pill-group input[type="radio"] { accent-color: var(--gold); }
+  .check-note-list .item-sub { flex: 1; }
+  .check-note-list .item-sub .item-text { display: block; }
+  .check-note-list .item-sub input[type="text"] {
+    width: 100%; border: none; border-bottom: 1px dotted var(--border); background: transparent;
+    font-family: inherit; font-size: 0.82rem; color: var(--sub); padding: 0.25rem 0; margin-top: 0.3rem; outline: none;
+  }
+
   @media print {
-    .toolbar, #screen-list, .save-hint, .storage-warning { display: none !important; }
+    .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav { display: none !important; }
+    #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
     section { break-inside: avoid; margin-bottom: 1.4rem; }
     ul.check-list input[type="checkbox"] { border-color: #999; }
     ul.check-list input[type="checkbox"]:checked { background: #fff; }
     ul.check-list input[type="checkbox"]:checked::after { border-color: #333; }
+    .note-field textarea, .field input, .note-field input { border-color: #999; }
   }
 </style>
 </head>
@@ -129,12 +177,12 @@
     <button class="add-button" id="btn-add">＋ 新しい神社を追加</button>
   </div>
 
-  <!-- 詳細（チェックリスト）画面 -->
+  <!-- 詳細画面 -->
   <div id="screen-detail" class="hidden">
     <div class="toolbar">
       <button class="back" id="btn-back">← 一覧に戻る</button>
       <button id="btn-print">印刷する</button>
-      <button id="btn-reset">チェックをリセット</button>
+      <button id="btn-reset">このタブをリセット</button>
       <button class="danger" id="btn-delete">この神社を削除</button>
     </div>
 
@@ -144,15 +192,91 @@
     </div>
     <p class="save-hint" id="save-hint">&nbsp;</p>
 
-    <div id="checklist-container"></div>
+    <div class="tab-nav">
+      <button id="tab-btn-visit" class="active">① 現地記録</button>
+      <button id="tab-btn-checklist">② 記事作成チェックリスト</button>
+    </div>
 
-    <footer>日本の神社 ご利益ナビ　制作メモ</footer>
+    <div id="panel-visit" class="tab-panel"></div>
+    <div id="panel-checklist" class="tab-panel hidden"></div>
+
+    <footer>日本の神社 ご利益ナビ　訪問記録＋制作メモ</footer>
   </div>
 
 </div>
 
 <script>
-  // ---------- チェック項目の定義 ----------
+  // =========================================================
+  // ① 現地記録（参拝中にその場で入力する項目）
+  // =========================================================
+  const VISIT_META = [
+    { id: "v_date", type: "date", label: "参拝日" },
+    { id: "v_weather", type: "text", label: "天候", placeholder: "例：晴れ、風あり" },
+    { id: "v_timeband", type: "radio", label: "時間帯", name: "v_timeband", options: ["早朝", "日中", "夕方", "夜"] },
+  ];
+
+  const VISIT_SECTIONS = [
+    {
+      title: "由緒書き・案内板",
+      note: "史料A・Bのもとになる部分。案内板があれば必ず写真に撮る。",
+      fields: [
+        { id: "v_chk_signage", type: "check", label: "由緒書き・案内板を撮影した" },
+        { id: "v_chk_map", type: "check", label: "境内図・地図があれば撮影した" },
+        { id: "v_saijin", type: "text", label: "御祭神（案内板に書かれている神名を書き写す）" },
+        { id: "v_yuisho", type: "textarea", label: "由緒の要点メモ（創建、伝承、気になった記述など）" },
+      ],
+    },
+    {
+      title: "境内の体感",
+      note: "「地形・風土的背景」のもとになる、その場でしか分からない感覚。",
+      fields: [
+        { id: "v_sando", type: "text", label: "参道の特徴（石段の数、坂や道の通称など）" },
+        { id: "v_crowd", type: "radio", label: "混雑具合", name: "v_crowd", options: ["空いていた", "ほどほど", "賑わっていた", "身動き取れないほど"] },
+        { id: "v_kisetsu", type: "textarea", label: "季節・自然・空気感のメモ（花、木、匂い、音など）" },
+      ],
+    },
+    {
+      title: "アクセス",
+      fields: [
+        { id: "v_parking1", type: "text", label: "駐車場の位置・台数" },
+        { id: "v_parking2", type: "text", label: "駐車場で気づいた注意点（舗装、混雑時間帯など）" },
+        { id: "v_walk", type: "text", label: "最寄り駅・バス停からの徒歩時間（実測）" },
+        { id: "v_drive", type: "text", label: "運転で気になった点（道幅、方面別の来やすさなど）" },
+        { id: "v_chk_geo", type: "check", label: "Googleマップで位置情報（緯度・経度）を確認した" },
+      ],
+    },
+    {
+      title: "社頭点景（見どころ）撮影チェック",
+      note: "撮った項目にチェック。右の欄に一言メモ（何が特徴的か）を残す。",
+      checkNoteList: true,
+      fields: [
+        { id: "v_spot_torii", type: "checknote", label: "鳥居" },
+        { id: "v_spot_haiden", type: "checknote", label: "拝殿・本殿" },
+        { id: "v_spot_komainu", type: "checknote", label: "狛犬" },
+        { id: "v_spot_shinboku", type: "checknote", label: "御神木・名木" },
+        { id: "v_spot_toro", type: "checknote", label: "灯籠・石碑・伝承の石" },
+        { id: "v_spot_other", type: "checknote", label: "その他", placeholder: "何を撮ったか＋一言メモ" },
+      ],
+    },
+    {
+      title: "授与品",
+      fields: [
+        { id: "v_chk_juyohin", type: "check", label: "お守り・おみくじの写真を撮った" },
+        { id: "v_juyohin_note", type: "textarea", label: "名称・特徴・値段のメモ" },
+      ],
+    },
+    {
+      title: "一言メモ",
+      note: "記事の書き出しに使える、その場だけの気づき・体験談。",
+      fields: [
+        { id: "v_memo", type: "textarea", label: null },
+      ],
+    },
+  ];
+
+  // =========================================================
+  // ② 記事作成チェックリスト（帰宅後・執筆時に使う既存のACFベースの項目）
+  // =========================================================
   const SECTIONS = [
     { title: "基本情報", items: [
       { id: "b1", label: "タイトルを入力（神社の正式名称）" },
@@ -211,6 +335,7 @@
   let entries = [];
   let currentId = null;
   let storageOK = true;
+  let currentTab = "visit"; // "visit" | "checklist"
 
   // ---------- 保存・読み込み（localStorage） ----------
   function checkStorage() {
@@ -226,7 +351,9 @@
   function loadEntries() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      const parsed = raw ? JSON.parse(raw) : [];
+      // 旧データ（visitフィールドが無い）にも安全にデフォルトを補う
+      return parsed.map(e => ({ checks: {}, visit: {}, ...e }));
     } catch (e) {
       console.error("load error", e);
       return [];
@@ -235,19 +362,128 @@
   function saveEntries() {
     const hint = document.getElementById("save-hint");
     if (!storageOK) {
-      if (hint) hint.textContent = "\u00a0";
+      if (hint) hint.textContent = " ";
       return;
     }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-      if (hint) { hint.textContent = "保存しました"; setTimeout(() => { if (hint.textContent === "保存しました") hint.textContent = "\u00a0"; }, 1200); }
+      if (hint) { hint.textContent = "保存しました"; setTimeout(() => { if (hint.textContent === "保存しました") hint.textContent = " "; }, 1200); }
     } catch (e) {
       if (hint) hint.textContent = "保存できませんでした（保存容量が一杯の可能性があります）";
       console.error("save error", e);
     }
   }
 
-  // ---------- チェックリストの描画（枠は一度だけ作る） ----------
+  // =========================================================
+  // 現地記録タブの描画
+  // =========================================================
+  function renderMetaField(f) {
+    if (f.type === "date" || f.type === "text") {
+      return `
+        <div class="field">
+          <label for="${f.id}">${f.label}</label>
+          <input id="${f.id}" type="${f.type}" data-visit-id="${f.id}" ${f.placeholder ? `placeholder="${f.placeholder}"` : ""}>
+        </div>`;
+    }
+    if (f.type === "radio") {
+      const opts = f.options.map((label, i) => `
+        <label><input type="radio" name="${f.name}" data-visit-id="${f.id}" value="${escapeHTML(label)}">${escapeHTML(label)}</label>
+      `).join("");
+      return `
+        <div class="field full">
+          <label>${f.label}</label>
+          <div class="pill-group">${opts}</div>
+        </div>`;
+    }
+    return "";
+  }
+
+  function renderVisitField(f) {
+    if (f.type === "check") {
+      return `
+        <li><label>
+          <input type="checkbox" data-visit-id="${f.id}">
+          <span class="item-text">${f.label}</span>
+        </label></li>`;
+    }
+    if (f.type === "text") {
+      return `
+        <div class="note-field">
+          <label>${f.label}</label>
+          <input type="text" data-visit-id="${f.id}">
+        </div>`;
+    }
+    if (f.type === "textarea") {
+      return `
+        <div class="note-field">
+          ${f.label ? `<label>${f.label}</label>` : ""}
+          <textarea data-visit-id="${f.id}" ${f.label ? "" : 'style="min-height:5rem;"'}></textarea>
+        </div>`;
+    }
+    if (f.type === "radio") {
+      const opts = f.options.map(label => `
+        <label><input type="radio" name="${f.id}" data-visit-id="${f.id}" value="${escapeHTML(label)}">${escapeHTML(label)}</label>
+      `).join("");
+      return `
+        <div class="note-field">
+          <label>${f.label}</label>
+          <div class="pill-group">${opts}</div>
+        </div>`;
+    }
+    if (f.type === "checknote") {
+      return `
+        <li><label>
+          <input type="checkbox" data-visit-id="${f.id}_chk">
+          <span class="item-sub">
+            <span class="item-text">${f.label}</span>
+            <input type="text" data-visit-id="${f.id}_note" placeholder="${f.placeholder || "一言メモ"}">
+          </span>
+        </label></li>`;
+    }
+    return "";
+  }
+
+  function buildVisitHTML() {
+    const metaHTML = `<div class="meta-grid">${VISIT_META.map(renderMetaField).join("")}</div>`;
+    const sectionsHTML = VISIT_SECTIONS.map(sec => {
+      const note = sec.note ? `<p class="section-note">${sec.note}</p>` : "";
+      const checkFields = sec.fields.filter(f => f.type === "check" || f.type === "checknote");
+      const otherFields = sec.fields.filter(f => f.type !== "check" && f.type !== "checknote");
+      const listHTML = checkFields.length
+        ? `<ul class="check-list${sec.checkNoteList ? " check-note-list" : ""}">${checkFields.map(renderVisitField).join("")}</ul>`
+        : "";
+      const othersHTML = otherFields.map(renderVisitField).join("");
+      return `
+        <section>
+          <p class="section-title">${sec.title}</p>
+          ${note}
+          ${listHTML}
+          ${othersHTML}
+        </section>`;
+    }).join("");
+    return metaHTML + sectionsHTML;
+  }
+
+  function applyVisitToDOM(visit) {
+    const v = visit || {};
+    document.querySelectorAll('#panel-visit [data-visit-id]').forEach(el => {
+      const id = el.dataset.visitId;
+      if (el.type === "checkbox") {
+        const on = !!v[id];
+        el.checked = on;
+        const li = el.closest("li");
+        if (li) li.classList.toggle("checked", on);
+      } else if (el.type === "radio") {
+        el.checked = v[id] === el.value;
+      } else {
+        el.value = v[id] || "";
+      }
+    });
+  }
+
+  // =========================================================
+  // 記事作成チェックリストタブの描画（既存機能そのまま）
+  // =========================================================
   function buildChecklistHTML() {
     return SECTIONS.map(sec => {
       const items = sec.items.map(it => `
@@ -267,7 +503,7 @@
     }).join("");
   }
   function applyChecksToDOM(checks) {
-    document.querySelectorAll('#checklist-container input[type="checkbox"]').forEach(box => {
+    document.querySelectorAll('#panel-checklist input[type="checkbox"]').forEach(box => {
       const id = box.dataset.id;
       const on = !!checks[id];
       box.checked = on;
@@ -279,6 +515,10 @@
   function progressOf(entry) {
     const checked = Object.values(entry.checks || {}).filter(Boolean).length;
     return { checked, total: ITEM_COUNT };
+  }
+  function hasVisitData(entry) {
+    const v = entry.visit || {};
+    return Object.values(v).some(val => val === true || (typeof val === "string" && val.trim() !== ""));
   }
   function formatDate(ts) {
     if (!ts) return "";
@@ -297,10 +537,12 @@
       const pct = Math.round((checked / total) * 100);
       const name = e.name && e.name.trim() ? e.name : "（名称未設定）";
       const nameClass = e.name && e.name.trim() ? "name" : "name empty";
+      const visitTag = hasVisitData(e) ? `<span class="tag">現地記録あり</span>` : "";
       return `
         <button class="shrine-card" data-id="${e.id}">
           <div class="${nameClass}">${escapeHTML(name)}</div>
-          <div class="meta"><span>${checked} / ${total} 完了</span><span>更新: ${formatDate(e.updatedAt)}</span></div>
+          <div class="tags">${visitTag}</div>
+          <div class="meta"><span>チェックリスト ${checked} / ${total}</span><span>更新: ${formatDate(e.updatedAt)}</span></div>
           <div class="progress-bar"><span style="width:${pct}%"></span></div>
         </button>`;
     }).join("");
@@ -309,7 +551,16 @@
     });
   }
   function escapeHTML(s) {
-    return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // ---------- タブ切り替え ----------
+  function showTab(tab) {
+    currentTab = tab;
+    document.getElementById("panel-visit").classList.toggle("hidden", tab !== "visit");
+    document.getElementById("panel-checklist").classList.toggle("hidden", tab !== "checklist");
+    document.getElementById("tab-btn-visit").classList.toggle("active", tab === "visit");
+    document.getElementById("tab-btn-checklist").classList.toggle("active", tab === "checklist");
   }
 
   // ---------- 画面切り替え ----------
@@ -326,15 +577,17 @@
     currentId = id;
     document.getElementById("screen-list").classList.add("hidden");
     document.getElementById("screen-detail").classList.remove("hidden");
-    document.getElementById("page-title").textContent = "神社記事 作成チェックリスト";
+    document.getElementById("page-title").textContent = "神社記録";
     document.getElementById("shrine-name").value = entry.name || "";
+    applyVisitToDOM(entry.visit || {});
     applyChecksToDOM(entry.checks || {});
-    document.getElementById("save-hint").textContent = "\u00a0";
+    document.getElementById("save-hint").textContent = " ";
+    showTab("visit");
   }
 
   // ---------- イベント ----------
   document.getElementById("btn-add").addEventListener("click", () => {
-    const entry = { id: "s_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: "", checks: {}, updatedAt: Date.now() };
+    const entry = { id: "s_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: "", checks: {}, visit: {}, updatedAt: Date.now() };
     entries.push(entry);
     saveEntries();
     openDetail(entry.id);
@@ -343,11 +596,17 @@
   document.getElementById("btn-print").addEventListener("click", () => window.print());
   document.getElementById("btn-reset").addEventListener("click", () => {
     if (!currentId) return;
-    if (!confirm("このチェックをすべてリセットします。よろしいですか？")) return;
+    const label = currentTab === "visit" ? "現地記録" : "記事作成チェックリスト";
+    if (!confirm(`「${label}」タブの内容をすべてリセットします。よろしいですか？`)) return;
     const entry = entries.find(e => e.id === currentId);
-    entry.checks = {};
+    if (currentTab === "visit") {
+      entry.visit = {};
+      applyVisitToDOM(entry.visit);
+    } else {
+      entry.checks = {};
+      applyChecksToDOM(entry.checks);
+    }
     entry.updatedAt = Date.now();
-    applyChecksToDOM(entry.checks);
     saveEntries();
   });
   document.getElementById("btn-delete").addEventListener("click", () => {
@@ -357,6 +616,9 @@
     saveEntries();
     showList();
   });
+  document.getElementById("tab-btn-visit").addEventListener("click", () => showTab("visit"));
+  document.getElementById("tab-btn-checklist").addEventListener("click", () => showTab("checklist"));
+
   document.getElementById("shrine-name").addEventListener("input", (e) => {
     if (!currentId) return;
     const entry = entries.find(x => x.id === currentId);
@@ -365,7 +627,8 @@
     clearTimeout(window.__nameSaveTimer);
     window.__nameSaveTimer = setTimeout(saveEntries, 500);
   });
-  document.getElementById("checklist-container").addEventListener("change", (e) => {
+
+  document.getElementById("panel-checklist").addEventListener("change", (e) => {
     if (e.target.matches('input[type="checkbox"]')) {
       if (!currentId) return;
       const entry = entries.find(x => x.id === currentId);
@@ -378,11 +641,35 @@
     }
   });
 
+  let visitSaveTimer = null;
+  function handleVisitFieldChange(e) {
+    const el = e.target.closest("[data-visit-id]");
+    if (!el || !currentId) return;
+    const entry = entries.find(x => x.id === currentId);
+    entry.visit = entry.visit || {};
+    const id = el.dataset.visitId;
+    if (el.type === "checkbox") {
+      entry.visit[id] = el.checked;
+      const li = el.closest("li");
+      if (li) li.classList.toggle("checked", el.checked);
+    } else if (el.type === "radio") {
+      entry.visit[id] = el.value;
+    } else {
+      entry.visit[id] = el.value;
+    }
+    entry.updatedAt = Date.now();
+    clearTimeout(visitSaveTimer);
+    visitSaveTimer = setTimeout(saveEntries, 400);
+  }
+  document.getElementById("panel-visit").addEventListener("input", handleVisitFieldChange);
+  document.getElementById("panel-visit").addEventListener("change", handleVisitFieldChange);
+
   // ---------- 初期化 ----------
   (function init() {
     storageOK = checkStorage();
     if (!storageOK) document.getElementById("storage-warning").classList.remove("hidden");
-    document.getElementById("checklist-container").innerHTML = buildChecklistHTML();
+    document.getElementById("panel-visit").innerHTML = buildVisitHTML();
+    document.getElementById("panel-checklist").innerHTML = buildChecklistHTML();
     entries = loadEntries();
     showList();
   })();
@@ -397,3 +684,4 @@
 
 </body>
 </html>
+
