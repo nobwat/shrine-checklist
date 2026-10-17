@@ -16,7 +16,7 @@
 2. **APIキー・個人情報を書かない。** 公開リポジトリなので、コード・ドキュメント・コミットメッセージのすべてが対象。
 3. **実データ・zip・test-media はコミットしない。** `shrine-backup*.json`、`*.zip`、`test-media/` は `.gitignore` 済み。書き出したファイルはリポジトリのフォルダに置かない。
 4. **main へは、ユーザーの実機確認が終わったものだけ。** PR は Claude が作り、マージはユーザーが GitHub 上で行う。push はユーザーの了承を得てから。
-5. **STEP 2 は独立ブランチ（`feature/safety-export`）で作り、先に本番へ出す。** STEP 3〜8 は `feature/field-mode` に積む。
+5. **STEP 2 は main から切った独立ブランチ（`feature/safety-export`）で作り、先に本番へ出す。** 本番に出したあと `feature/field-mode` に main を取り込み、STEP 3〜8 をその上に積む。
 6. 各 STEP は1コミット。直しが出たら「STEP n 修正: …」の追加コミットにする。
 
 ## これまでの決定事項
@@ -67,4 +67,5 @@ STEP 0（2026-10-17）で挙げたリスク。方針の根拠：決定＝ユー�
 
 - 2026-10-17：STEP 1（データ設計・移行計画）の確認事項 Q1〜Q5 に回答済み（上の決定事項に反映）。
 - 2台運用の準備として `docs/step1-plan.md` と本ファイルを `feature/field-mode` にコミット。
-- **次：STEP 1 の確定**（回答を計画書に反映して確定版にする）→ STEP 2（`feature/safety-export`）に着手。
+- 2026-10-17：STEP 1 確定。Q1〜Q5 の回答とブランチ手順の修正を `docs/step1-plan.md` に反映（確定版）。
+- **次：STEP 2**（main から `feature/safety-export` を作成して着手）。Cloudflare Pages の設定（計画書2章）はユーザー側の作業で、まだ終わっていない。
