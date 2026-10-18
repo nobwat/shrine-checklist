@@ -23,7 +23,7 @@
 
 | 項目 | 決定 |
 |---|---|
-| 確認用の公開先 | Cloudflare Pages の別ドメイン（`*.pages.dev`）。本番とデータが混ざらない。確認はブランチ別名 URL を使う（ハッシュ付き URL は使わない）。pages.dev 上では「テスト版」バッジを出す |
+| 確認用の公開先 | Cloudflare Pages の別ドメイン（`*.pages.dev`）。本番とデータが混ざらない。確認はブランチ別名 URL を使う（ハッシュ付き URL は使わない）。pages.dev 上では「テスト版」バッジを出す。<br>設定済み（2026-10-18）：main → `https://shrine-checklist.pages.dev`（実記録には使わない）。feature ブランチを push するとブランチ別名 URL が自動で作られる（例：`https://feature-safety-export.shrine-checklist.pages.dev`） |
 | 写真ラベル | 既存の撮影チェック9項目と同名＋写真専用「手水舎」「御朱印」。キーで保存。既存チェック項目は変更しない |
 | 写真の元サイズ | canvas 上限（総画素数 1,670万）まで縮める。再エンコードで EXIF は消える |
 | 縮小できない写真 | 元ファイルのまま保存し、「位置情報（EXIF）が残っています」と警告する（案A） |
@@ -68,4 +68,5 @@ STEP 0（2026-10-17）で挙げたリスク。方針の根拠：決定＝ユー�
 - 2026-10-17：STEP 1（データ設計・移行計画）の確認事項 Q1〜Q5 に回答済み（上の決定事項に反映）。
 - 2台運用の準備として `docs/step1-plan.md` と本ファイルを `feature/field-mode` にコミット。
 - 2026-10-17：STEP 1 確定。Q1〜Q5 の回答とブランチ手順の修正を `docs/step1-plan.md` に反映（確定版）。
-- **次：STEP 2**（main から `feature/safety-export` を作成して着手）。Cloudflare Pages の設定（計画書2章）はユーザー側の作業で、まだ終わっていない。
+- 2026-10-18：Cloudflare Pages の設定（計画書2章）が完了（ユーザー作業）。main の公開先は `https://shrine-checklist.pages.dev`。feature ブランチを push するとブランチ別名の確認用 URL が自動で作られる。
+- **次：STEP 2**（main から `feature/safety-export` を作成して着手）。確認は `https://feature-safety-export.shrine-checklist.pages.dev` で行う。
