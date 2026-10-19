@@ -114,6 +114,55 @@
     background: #fdf3ee; border: 1px solid #e3c8bb; color: #8a4a34;
     font-size: 0.78rem; padding: 0.9rem 1rem; border-radius: 6px; margin-bottom: 1.6rem;
   }
+  .load-error {
+    background: #fbeaea; border: 2px solid #b5413a; color: #7a1f1a;
+    font-size: 0.82rem; padding: 1rem; border-radius: 6px; margin-bottom: 1.6rem;
+  }
+  .load-error strong { display: block; font-size: 0.92rem; margin-bottom: 0.4rem; }
+  .load-error .pill-button { border-color: #b5413a; color: #b5413a; margin-top: 0.8rem; }
+  .test-badge {
+    display: inline-block; font-size: 0.66rem; color: #fff; background: #b5665a;
+    border-radius: 999px; padding: 0.05rem 0.7rem; letter-spacing: 0.08em; vertical-align: middle;
+  }
+  header .test-badge { margin-top: 0.5rem; }
+
+  /* ---- データの保管・診断 ---- */
+  .pill-button {
+    font-family: inherit; font-size: 0.76rem; letter-spacing: 0.05em; background: none;
+    border: 1px solid var(--gold-line); color: var(--gold); padding: 0.5rem 1rem; border-radius: 999px; cursor: pointer;
+  }
+  .pill-button:active { background: var(--gold); color: #fff; }
+  .link-button {
+    background: none; border: none; color: var(--sub); text-decoration: underline;
+    font-family: inherit; font-size: 0.74rem; cursor: pointer; padding: 0.3rem 0.5rem;
+  }
+  .data-tools { margin-top: 2.6rem; padding-top: 1.2rem; border-top: 1px solid var(--border); text-align: center; }
+  .data-tools-title { font-size: 0.8rem; color: var(--gold); letter-spacing: 0.08em; margin: 0 0 0.8rem; }
+  .data-tools-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.6rem; }
+  .data-tools-note { font-size: 0.7rem; color: var(--sub); margin: 0.6rem 0 0.2rem; min-height: 1em; }
+  .app-version { text-align: center; font-size: 0.7rem; color: var(--sub); margin-top: 1.4rem; }
+  .diag-output {
+    white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.66rem; line-height: 1.6; background: #fff; border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.9rem; margin: 0;
+  }
+  .guide { font-size: 0.86rem; }
+  .guide h2 { font-size: 0.95rem; font-weight: 500; color: var(--gold); margin: 1.8rem 0 0.6rem; }
+  .guide ol, .guide ul { padding-left: 1.4rem; margin: 0.4rem 0; }
+  .guide li { margin-bottom: 0.4rem; }
+  .guide .now { background: rgba(138,109,61,0.08); border-radius: 6px; padding: 0.7rem 0.9rem; }
+  .modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 100;
+    display: flex; align-items: center; justify-content: center; padding: 1rem;
+  }
+  .modal-box { background: var(--bg); border-radius: 8px; padding: 1.2rem; max-width: 420px; width: 100%; }
+  .modal-text { white-space: pre-wrap; font-size: 0.88rem; margin: 0 0 1rem; }
+  .modal-buttons { display: flex; flex-direction: column; gap: 0.5rem; }
+  .modal-buttons button {
+    font-family: inherit; font-size: 0.85rem; padding: 0.7rem; border-radius: 6px;
+    border: 1px solid var(--gold-line); background: #fff; color: var(--gold); cursor: pointer;
+  }
+  .modal-buttons button.primary { background: var(--gold); color: #fff; }
 
   /* ---- 現地記録タブ用のフィールド類 ---- */
   .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem 1rem; margin-bottom: 0.4rem; }
@@ -146,7 +195,8 @@
   }
 
   @media print {
-    .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav { display: none !important; }
+    .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
+    .load-error, .test-badge, #screen-diag, #screen-guide, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -165,10 +215,18 @@
   <header>
     <p class="eyebrow">日本の神社 ご利益ナビ</p>
     <h1 id="page-title">神社訪問記録</h1>
+    <span class="test-badge js-test-badge hidden">テスト版</span>
   </header>
 
   <div id="storage-warning" class="storage-warning hidden">
     このブラウザでは保存機能が使えないため、記録はページを閉じると消えます（プライベートブラウジング中などに起こります）。
+  </div>
+
+  <div id="load-error" class="load-error hidden">
+    <strong>記録データを読み込めませんでした</strong>
+    データを守るため、保存を止めています（この状態で入力しても保存されません）。<br>
+    下のボタンで、今残っているデータをそのままファイルに書き出して保管してください。
+    <div><button class="pill-button" id="btn-export-raw">生データを書き出す</button></div>
   </div>
 
   <!-- 一覧画面 -->
@@ -176,6 +234,71 @@
     <p class="intro">訪れた神社ごとに記録を残せます。タップして続きから入力できます。<br>データはこの端末・このブラウザの中だけに保存されます。</p>
     <div id="shrine-list"></div>
     <button class="add-button" id="btn-add">＋ 新しい神社を追加</button>
+
+    <div class="data-tools">
+      <p class="data-tools-title">データの保管</p>
+      <div class="data-tools-buttons">
+        <button class="pill-button" id="btn-export">全データ書き出し</button>
+        <button class="pill-button" id="btn-import">JSONから読み込み</button>
+      </div>
+      <p class="data-tools-note" id="last-export">&nbsp;</p>
+      <div>
+        <button class="link-button" id="btn-export-download">ファイルとしてダウンロード</button>
+        <button class="link-button" id="btn-open-guide">iPhoneでの保存について</button>
+        <button class="link-button" id="btn-open-diag">診断</button>
+      </div>
+      <input type="file" id="import-file" accept=".json,application/json" class="hidden">
+    </div>
+    <p class="app-version">バージョン <span id="app-version"></span> <span class="test-badge js-test-badge hidden">テスト版</span></p>
+  </div>
+
+  <!-- 診断画面 -->
+  <div id="screen-diag" class="hidden">
+    <div class="toolbar">
+      <button class="back js-back">← 一覧に戻る</button>
+      <button id="btn-copy-diag">診断内容をコピー</button>
+    </div>
+    <pre class="diag-output" id="diag-output">読み込み中…</pre>
+  </div>
+
+  <!-- iPhone 向け案内画面 -->
+  <div id="screen-guide" class="hidden">
+    <div class="toolbar">
+      <button class="back js-back">← 一覧に戻る</button>
+    </div>
+    <div class="guide">
+      <p class="now" id="guide-now"></p>
+
+      <h2>ホーム画面に追加して使ってください</h2>
+      <ul>
+        <li>Safari のタブで開いて使うと、7日間このサイトを開かなかった場合に、記録が自動で削除されることがあります。</li>
+        <li>ホーム画面に追加したアプリから開くと、この自動削除の対象外になります。記録はホーム画面のアプリで付けるのを基本にしてください。</li>
+        <li>Safari のタブとホーム画面のアプリは、<strong>データの保存場所が別々</strong>です。片方で付けた記録は、もう片方には出てきません。</li>
+      </ul>
+
+      <h2>Safari の記録をホーム画面のアプリへ移す手順</h2>
+      <ol>
+        <li>Safari のタブでこのページを開き、一覧の下の「全データ書き出し」を押します。</li>
+        <li>共有メニューで「"ファイル"に保存」を選び、保存します。</li>
+        <li>Safari の共有ボタン（□に↑）から「ホーム画面に追加」を選びます。</li>
+        <li>ホーム画面のアイコンからアプリを開き、「JSONから読み込み」で2.のファイルを選びます。</li>
+        <li>一覧の件数が Safari 側と同じになっていることを確かめます。</li>
+        <li>以後はホーム画面のアプリで記録を付けます。Safari 側のデータは、念のためしばらく残しておいてください。</li>
+      </ol>
+
+      <h2>ふだんの備え</h2>
+      <ul>
+        <li>ときどき「全データ書き出し」でファイルに保存しておくと、端末の故障や機種変更のときに戻せます。</li>
+        <li>Android の Chrome でも、ホーム画面に追加して使うことをおすすめします。</li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-box">
+      <p class="modal-text" id="modal-text"></p>
+      <div class="modal-buttons" id="modal-buttons"></div>
+    </div>
   </div>
 
   <!-- 詳細画面 -->
@@ -331,12 +454,64 @@
   ];
   const ITEM_COUNT = SECTIONS.reduce((sum, s) => sum + s.items.length, 0);
   const STORAGE_KEY = "shrine-entries-offline";
+  const BACKUP_PREFIX = STORAGE_KEY + "_backup_v1_"; // 読み込み・移行の直前に作る丸ごとの複製
+  const BACKUP_KEEP = 3;
+  const META_KEY = "shrine-meta";
+  const ERRORLOG_KEY = "shrine-errorlog";
+  const ERRORLOG_KEEP = 10;
+  const APP_VERSION = "1.1.0";
+  const IS_TEST = location.hostname.endsWith(".pages.dev"); // 確認用（Cloudflare Pages）
 
   // ---------- 状態 ----------
   let entries = [];
   let currentId = null;
   let storageOK = true;
   let currentTab = "visit"; // "visit" | "checklist"
+  let loadFailure = null;   // 読み込みに失敗したとき { raw, error }。この間は保存しない
+  let persistResult = "未要求";
+  let saveTimer = null;
+
+  // ---------- エラーログ（shrine-errorlog に直近10件） ----------
+  const memoryErrorLog = [];
+  function logError(where, err) {
+    const msg = String((err && (err.message || err.reason)) || err).slice(0, 300);
+    const item = { at: isoLocal(new Date()), where, msg };
+    console.error(where, err);
+    try {
+      const list = JSON.parse(localStorage.getItem(ERRORLOG_KEY) || "[]");
+      list.push(item);
+      localStorage.setItem(ERRORLOG_KEY, JSON.stringify(list.slice(-ERRORLOG_KEEP)));
+    } catch (e) {
+      memoryErrorLog.push(item);
+    }
+  }
+  function readErrorLog() {
+    let list = [];
+    try { list = JSON.parse(localStorage.getItem(ERRORLOG_KEY) || "[]"); } catch (e) { /* 壊れていれば空扱い */ }
+    return list.concat(memoryErrorLog).slice(-ERRORLOG_KEEP);
+  }
+  window.addEventListener("error", (e) => {
+    const where = e.filename ? `${e.filename.split("/").pop()}:${e.lineno}` : "";
+    logError("error", `${e.message} ${where}`.trim());
+  });
+  window.addEventListener("unhandledrejection", (e) => logError("unhandledrejection", e.reason));
+
+  // ---------- 日時の書式 ----------
+  function pad(n) { return String(n).padStart(2, "0"); }
+  // withSec=false: 20261020-1030（ファイル名用） / true: 20261020T103000（バックアップキー用）
+  function stamp(d, withSec) {
+    const day = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+    return withSec
+      ? `${day}T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+      : `${day}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  }
+  // 時差付きの ISO 形式（例：2026-10-20T10:30:00+09:00）
+  function isoLocal(d) {
+    const off = -d.getTimezoneOffset();
+    const a = Math.abs(off);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+      + `${off >= 0 ? "+" : "-"}${pad(Math.floor(a / 60))}:${pad(a % 60)}`;
+  }
 
   // ---------- 保存・読み込み（localStorage） ----------
   function checkStorage() {
@@ -349,16 +524,53 @@
       return false;
     }
   }
-  function loadEntries() {
+  // 記録の配列として正しい形か。問題があれば理由の文字列、なければ null
+  function validateEntries(list) {
+    if (!Array.isArray(list)) return "記録の配列になっていません";
+    const i = list.findIndex(e => !e || typeof e !== "object" || Array.isArray(e) || typeof e.id !== "string" || !e.id);
+    return i >= 0 ? `${i + 1}件目の形式が正しくありません` : null;
+  }
+  // 保存されている最新の記録を読む。{ ok, raw, list } または { ok:false, raw, error }
+  function readStored() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { ok: true, raw, list: [] };
+    let parsed;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      // 旧データ（visitフィールドが無い）にも安全にデフォルトを補う
-      return parsed.map(e => ({ checks: {}, visit: {}, ...e }));
+      parsed = JSON.parse(raw);
     } catch (e) {
-      console.error("load error", e);
+      return { ok: false, raw, error: "JSON として読めません: " + e.message };
+    }
+    const problem = validateEntries(parsed);
+    return problem ? { ok: false, raw, error: problem } : { ok: true, raw, list: parsed };
+  }
+  function loadEntries() {
+    let result;
+    try {
+      result = readStored();
+    } catch (e) {
+      result = { ok: false, raw: null, error: e.message };
+    }
+    if (!result.ok) {
+      // [] で上書きしてデータを消さないよう、以後の保存を止める
+      loadFailure = result;
+      logError("load", result.error);
+      document.getElementById("load-error").classList.remove("hidden");
       return [];
     }
+    loadFailure = null;
+    // 旧データ（visitフィールドが無い）にも安全にデフォルトを補う
+    return result.list.map(e => ({ checks: {}, visit: {}, ...e }));
+  }
+  function scheduleSave(ms) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { saveTimer = null; saveEntries(); }, ms);
+  }
+  // 入力直後の保存待ちがあれば、すぐに保存する（書き出し・読み込みの前に呼ぶ）
+  function flushPendingSave() {
+    if (saveTimer === null) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveEntries();
   }
   function saveEntries() {
     const hint = document.getElementById("save-hint");
@@ -366,13 +578,366 @@
       if (hint) hint.textContent = " ";
       return;
     }
+    if (loadFailure) {
+      if (hint) hint.textContent = "データを読み込めなかったため、保存を止めています";
+      return;
+    }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
       if (hint) { hint.textContent = "保存しました"; setTimeout(() => { if (hint.textContent === "保存しました") hint.textContent = " "; }, 1200); }
     } catch (e) {
       if (hint) hint.textContent = "保存できませんでした（保存容量が一杯の可能性があります）";
-      console.error("save error", e);
+      logError("save", e);
     }
+  }
+
+  // ---------- メタ情報（shrine-meta） ----------
+  function readMeta() {
+    try { return JSON.parse(localStorage.getItem(META_KEY) || "{}") || {}; } catch (e) { return {}; }
+  }
+  function updateMeta(patch) {
+    try {
+      localStorage.setItem(META_KEY, JSON.stringify({ ...readMeta(), ...patch }));
+    } catch (e) {
+      logError("meta", e);
+    }
+  }
+
+  // ---------- バックアップキー（読み込み前の丸ごと複製。最新3件まで） ----------
+  function listBackups() {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(BACKUP_PREFIX)) keys.push(k);
+    }
+    return keys.sort().reverse(); // 新しい順
+  }
+  // 書いて読み戻し、一致しなければ例外にする（呼び出し側は元データに書かずに中止する）
+  function makeBackup(raw) {
+    const base = BACKUP_PREFIX + stamp(new Date(), true);
+    let key = base;
+    for (let n = 2; localStorage.getItem(key) !== null; n++) key = `${base}_${n}`;
+    localStorage.setItem(key, raw);
+    if (localStorage.getItem(key) !== raw) {
+      localStorage.removeItem(key);
+      throw new Error("バックアップの読み戻しが一致しません");
+    }
+    return key;
+  }
+  function pruneBackups() {
+    listBackups().slice(BACKUP_KEEP).forEach(k => localStorage.removeItem(k));
+  }
+
+  // ---------- ファイルの受け渡し（share が使えれば share、だめならダウンロード） ----------
+  function downloadBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+  // iOS ではボタン押下の直後でないと share を呼べないため、share より前に await を置かないこと
+  async function deliverFile(name, text, mode) {
+    const type = "application/json";
+    const blob = new Blob([text], { type });
+    if (mode !== "download" && navigator.canShare) {
+      const file = new File([blob], name, { type });
+      if (navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file] });
+          return true;
+        } catch (e) {
+          if (e.name === "AbortError") return false; // 利用者が閉じた
+          logError("share", e);
+        }
+      }
+    }
+    downloadBlob(blob, name);
+    return true;
+  }
+
+  // ---------- 全データ書き出し ----------
+  async function exportAll(mode) {
+    if (!storageOK) { alert("このブラウザでは保存機能が使えないため、書き出せる記録がありません。"); return; }
+    if (loadFailure) { exportRaw(); return; }
+    flushPendingSave();
+    let stored;
+    try {
+      stored = readStored();
+    } catch (e) {
+      stored = { ok: false, error: e.message };
+    }
+    if (!stored.ok) {
+      logError("export", stored.error);
+      alert("記録データを読み込めませんでした。画面を開き直してください。");
+      return;
+    }
+    const now = new Date();
+    const data = {
+      format: "shrine-checklist-backup",
+      formatVersion: 1,
+      appVersion: APP_VERSION,
+      exportedAt: isoLocal(now),
+      origin: location.origin,
+      count: stored.list.length,
+      entries: stored.list,
+    };
+    const done = await deliverFile(`shrine-backup_${stamp(now, false)}.json`, JSON.stringify(data, null, 2), mode);
+    if (done) {
+      updateMeta({ lastExportAt: isoLocal(now) });
+      renderLastExport();
+    }
+  }
+  // 読み込みに失敗したとき用：保存されている文字列をそのまま書き出す
+  function exportRaw() {
+    const raw = loadFailure && loadFailure.raw;
+    if (raw === null || raw === undefined) { alert("書き出せるデータがありません。"); return; }
+    deliverFile(`shrine-backup_raw_${stamp(new Date(), false)}.json`, raw, "auto").catch(e => logError("exportRaw", e));
+  }
+  function renderLastExport() {
+    const at = readMeta().lastExportAt;
+    document.getElementById("last-export").textContent = at ? `最後の書き出し：${formatDateTime(at)}` : "まだ書き出したことがありません";
+  }
+
+  // ---------- 選択ダイアログ ----------
+  // buttons: [{ label, value, primary }]。選ばれた value を返す
+  function choose(text, buttons) {
+    return new Promise(resolve => {
+      const modal = document.getElementById("modal");
+      const box = document.getElementById("modal-buttons");
+      document.getElementById("modal-text").textContent = text;
+      box.innerHTML = "";
+      buttons.forEach(b => {
+        const el = document.createElement("button");
+        el.textContent = b.label;
+        if (b.primary) el.className = "primary";
+        el.addEventListener("click", () => { modal.classList.add("hidden"); resolve(b.value); });
+        box.appendChild(el);
+      });
+      modal.classList.remove("hidden");
+    });
+  }
+
+  // ---------- JSON から読み込み ----------
+  async function importFromFile(file) {
+    if (!storageOK) { alert("このブラウザでは保存機能が使えないため、読み込めません。"); return; }
+    if (loadFailure) { alert("今のデータを読み込めていないため、読み込みはできません。先に「生データを書き出す」で保管してください。"); return; }
+    flushPendingSave();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch (e) {
+      alert("JSON ファイルとして読めませんでした。");
+      return;
+    }
+    // このアプリの書き出し形式、または記録の配列そのもの（生データ）を受け付ける
+    const incomingRaw = Array.isArray(parsed) ? parsed
+      : (parsed && parsed.format === "shrine-checklist-backup" ? parsed.entries : null);
+    const problem = incomingRaw ? validateEntries(incomingRaw) : "このアプリの書き出しファイルではありません";
+    if (problem) { alert(`読み込めませんでした：${problem}`); return; }
+    // ファイル内で id が重なっていたら後のものを使う
+    const incoming = [...new Map(incomingRaw.map(e => [e.id, e])).values()];
+    if (incoming.length === 0) { alert("ファイルに記録が入っていません。"); return; }
+
+    const stored = readStored();
+    if (!stored.ok) { alert("今の記録データを読み込めませんでした。画面を開き直してください。"); return; }
+    const current = stored.list;
+    const index = new Map(current.map((e, i) => [e.id, i]));
+    const fresh = incoming.filter(e => !index.has(e.id));
+    const dup = incoming.filter(e => index.has(e.id));
+
+    const summary = `ファイルの記録：${incoming.length}件\n新規 ${fresh.length}件・重複 ${dup.length}件`;
+    const choice = dup.length
+      ? await choose(`${summary}\n\n重複した記録（同じ記録の別の版）をどうしますか？`, [
+          { label: "スキップ（今の記録を残す）", value: "skip", primary: true },
+          { label: "上書き（ファイルの内容にする）", value: "overwrite" },
+          { label: "やめる", value: "cancel" },
+        ])
+      : await choose(`${summary}\n\n読み込みますか？`, [
+          { label: "読み込む", value: "skip", primary: true },
+          { label: "やめる", value: "cancel" },
+        ]);
+    if (choice === "cancel") return;
+
+    // 読み込み前の状態を丸ごと残す。残せなければ元データに書かずに中止する
+    let backupKey = null;
+    if (stored.raw) {
+      try {
+        backupKey = makeBackup(stored.raw);
+      } catch (e) {
+        logError("import-backup", e);
+        alert("読み込み前のバックアップを作れなかったため、中止しました（保存容量が一杯の可能性があります）。元のデータは変更していません。");
+        return;
+      }
+    }
+
+    const merged = current.slice();
+    if (choice === "overwrite") dup.forEach(e => { merged[index.get(e.id)] = e; });
+    fresh.forEach(e => merged.push(e));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      const check = readStored();
+      if (!check.ok || check.list.length !== merged.length) throw new Error("書き込み後の読み戻しが一致しません");
+    } catch (e) {
+      logError("import", e);
+      try {
+        if (stored.raw) localStorage.setItem(STORAGE_KEY, stored.raw);
+        else localStorage.removeItem(STORAGE_KEY);
+      } catch (e2) {
+        logError("import-restore", e2);
+      }
+      alert("読み込みに失敗しました。元のデータに戻しました。");
+      return;
+    }
+    try { pruneBackups(); } catch (e) { logError("prune", e); }
+
+    entries = loadEntries();
+    renderList();
+    const dupText = dup.length ? `、重複${dup.length}件を${choice === "overwrite" ? "上書き" : "スキップ"}` : "";
+    alert(`読み込みました：新規${fresh.length}件を追加${dupText}しました。` + (backupKey ? "\n（読み込み前の状態は診断画面のバックアップ一覧に残っています）" : ""));
+  }
+
+  // =========================================================
+  // 診断画面
+  // =========================================================
+  function isStandalone() {
+    return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  }
+  function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  }
+  function formatDateTime(iso) {
+    const d = new Date(iso);
+    return isNaN(d) ? String(iso) : d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+  async function buildDiagText() {
+    const L = [];
+    L.push("■ アプリ");
+    L.push(`バージョン: ${APP_VERSION}${IS_TEST ? "（テスト版）" : ""}`);
+    L.push(`URL: ${location.origin}${location.pathname}`);
+    L.push(`日時: ${isoLocal(new Date())}`);
+    L.push(`ブラウザ: ${navigator.userAgent}`);
+    L.push(`standalone 起動: ${isStandalone() ? "はい" : "いいえ"}`);
+
+    L.push("", "■ 保存領域");
+    L.push(`persist() の要求結果: ${persistResult}`);
+    try {
+      L.push(`persisted: ${navigator.storage && navigator.storage.persisted ? ((await navigator.storage.persisted()) ? "はい" : "いいえ") : "未対応"}`);
+    } catch (e) { L.push(`persisted: 取得エラー（${e.message}）`); }
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const est = await navigator.storage.estimate();
+        L.push(`使用量 / 上限: ${formatBytes(est.usage || 0)} / ${formatBytes(est.quota || 0)}`);
+      } else {
+        L.push("使用量 / 上限: 未対応");
+      }
+    } catch (e) { L.push(`使用量 / 上限: 取得エラー（${e.message}）`); }
+
+    L.push("", "■ 録音形式（MediaRecorder）");
+    if (typeof MediaRecorder === "undefined") {
+      L.push("MediaRecorder: 未対応");
+    } else {
+      ["audio/webm;codecs=opus", "audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm"].forEach(t => {
+        let ok = false;
+        try { ok = MediaRecorder.isTypeSupported(t); } catch (e) { /* 判定できなければ未対応扱い */ }
+        L.push(`${t}: ${ok ? "○" : "×"}`);
+      });
+    }
+
+    L.push("", "■ IndexedDB");
+    // indexedDB.open は DB を作ってしまうので呼ばない。一覧だけ見る
+    try {
+      if (window.indexedDB && indexedDB.databases) {
+        const dbs = await indexedDB.databases();
+        const mine = dbs.find(d => d.name === "shrine-checklist");
+        L.push(`shrine-checklist: ${mine ? `作成済み（version ${mine.version}）` : "未作成"}`);
+        const others = dbs.filter(d => d.name !== "shrine-checklist").map(d => d.name);
+        if (others.length) L.push(`その他のデータベース: ${others.join(", ")}`);
+      } else {
+        L.push(window.indexedDB ? "一覧の取得に未対応のブラウザ" : "IndexedDB: 未対応");
+      }
+    } catch (e) { L.push(`取得エラー（${e.message}）`); }
+
+    L.push("", "■ service worker");
+    L.push(`制御中: ${navigator.serviceWorker && navigator.serviceWorker.controller ? "はい" : "いいえ"}`);
+    try {
+      if (window.caches) {
+        const names = (await caches.keys()).filter(k => k.startsWith("shrine-app-"));
+        L.push(`キャッシュ: ${names.join(", ") || "なし"}`);
+      }
+    } catch (e) { L.push(`キャッシュ: 取得エラー（${e.message}）`); }
+
+    L.push("", "■ localStorage");
+    if (!storageOK) {
+      L.push("使用不可");
+    } else {
+      L.push(`読み込み: ${loadFailure ? `失敗（${loadFailure.error}）` : "正常"}`);
+      L.push(`記録件数: ${loadFailure ? "不明" : entries.length}`);
+      let total = 0, otherCount = 0;
+      const rows = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        const size = (k.length + (localStorage.getItem(k) || "").length) * 2; // UTF-16 として概算
+        total += size;
+        if (k.startsWith("shrine-")) rows.push(`  ${k}: 約${formatBytes(size)}`);
+        else otherCount++;
+      }
+      L.push(`キーごとのサイズ（このアプリの分）:`);
+      L.push(...rows.sort());
+      if (otherCount) L.push(`  （同じドメインの他のキー ${otherCount}件）`);
+      L.push(`合計: 約${formatBytes(total)}`);
+      const backups = listBackups();
+      L.push(`バックアップ（最新${BACKUP_KEEP}件まで）: ${backups.length}件`);
+      backups.forEach(k => {
+        let count = "?";
+        try { count = JSON.parse(localStorage.getItem(k)).length; } catch (e) { /* 件数が読めなくても一覧には出す */ }
+        L.push(`  ${k}（${count}件）`);
+      });
+      const meta = readMeta();
+      L.push(`最後の書き出し: ${meta.lastExportAt ? formatDateTime(meta.lastExportAt) : "なし"}`);
+    }
+
+    const errors = readErrorLog();
+    L.push("", `■ 直近のエラー（${errors.length}件）`);
+    errors.forEach(e => L.push(`${e.at} [${e.where}] ${e.msg}`));
+    return L.join("\n");
+  }
+  async function showDiag() {
+    showScreen("diag");
+    const out = document.getElementById("diag-output");
+    out.textContent = "読み込み中…";
+    try {
+      out.textContent = await buildDiagText();
+    } catch (e) {
+      logError("diag", e);
+      out.textContent = "診断内容を作れませんでした：" + e.message;
+    }
+  }
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    }
+  }
+  function showGuide() {
+    showScreen("guide");
+    document.getElementById("guide-now").textContent = isStandalone()
+      ? "いまは「ホーム画面のアプリ」で開いています。"
+      : "いまは「ブラウザのタブ」で開いています。";
   }
 
   // =========================================================
@@ -565,20 +1130,23 @@
   }
 
   // ---------- 画面切り替え ----------
+  const SCREEN_TITLES = { list: "神社訪問記録", detail: "神社記録", diag: "診断", guide: "iPhoneでの保存について" };
+  function showScreen(name) {
+    Object.keys(SCREEN_TITLES).forEach(s => document.getElementById(`screen-${s}`).classList.toggle("hidden", s !== name));
+    document.getElementById("page-title").textContent = SCREEN_TITLES[name];
+    window.scrollTo(0, 0);
+  }
   function showList() {
     currentId = null;
-    document.getElementById("screen-list").classList.remove("hidden");
-    document.getElementById("screen-detail").classList.add("hidden");
-    document.getElementById("page-title").textContent = "神社訪問記録";
+    showScreen("list");
     renderList();
+    renderLastExport();
   }
   function openDetail(id) {
     const entry = entries.find(e => e.id === id);
     if (!entry) return;
     currentId = id;
-    document.getElementById("screen-list").classList.add("hidden");
-    document.getElementById("screen-detail").classList.remove("hidden");
-    document.getElementById("page-title").textContent = "神社記録";
+    showScreen("detail");
     document.getElementById("shrine-name").value = entry.name || "";
     applyVisitToDOM(entry.visit || {});
     applyChecksToDOM(entry.checks || {});
@@ -588,6 +1156,7 @@
 
   // ---------- イベント ----------
   document.getElementById("btn-add").addEventListener("click", () => {
+    if (loadFailure) { alert("記録データを読み込めなかったため、保存を止めています。新しい記録は追加できません。"); return; }
     const entry = { id: "s_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: "", checks: {}, visit: {}, updatedAt: Date.now() };
     entries.push(entry);
     saveEntries();
@@ -625,8 +1194,7 @@
     const entry = entries.find(x => x.id === currentId);
     entry.name = e.target.value;
     entry.updatedAt = Date.now();
-    clearTimeout(window.__nameSaveTimer);
-    window.__nameSaveTimer = setTimeout(saveEntries, 500);
+    scheduleSave(500);
   });
 
   document.getElementById("panel-checklist").addEventListener("change", (e) => {
@@ -642,7 +1210,6 @@
     }
   });
 
-  let visitSaveTimer = null;
   function handleVisitFieldChange(e) {
     const el = e.target.closest("[data-visit-id]");
     if (!el || !currentId) return;
@@ -659,20 +1226,48 @@
       entry.visit[id] = el.value;
     }
     entry.updatedAt = Date.now();
-    clearTimeout(visitSaveTimer);
-    visitSaveTimer = setTimeout(saveEntries, 400);
+    scheduleSave(400);
   }
   document.getElementById("panel-visit").addEventListener("input", handleVisitFieldChange);
   document.getElementById("panel-visit").addEventListener("change", handleVisitFieldChange);
+
+  // データの保管・診断
+  document.getElementById("btn-export").addEventListener("click", () => exportAll("auto").catch(e => logError("export", e)));
+  document.getElementById("btn-export-download").addEventListener("click", () => exportAll("download").catch(e => logError("export", e)));
+  document.getElementById("btn-export-raw").addEventListener("click", exportRaw);
+  document.getElementById("btn-import").addEventListener("click", () => document.getElementById("import-file").click());
+  document.getElementById("import-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    e.target.value = ""; // 同じファイルをもう一度選べるようにする
+    if (file) importFromFile(file).catch(err => { logError("import", err); alert("読み込みに失敗しました：" + err.message); });
+  });
+  document.getElementById("btn-open-diag").addEventListener("click", showDiag);
+  document.getElementById("btn-open-guide").addEventListener("click", showGuide);
+  document.querySelectorAll(".js-back").forEach(b => b.addEventListener("click", showList));
+  document.getElementById("btn-copy-diag").addEventListener("click", async (e) => {
+    const ok = await copyText(document.getElementById("diag-output").textContent);
+    e.target.textContent = ok ? "コピーしました" : "コピーできませんでした";
+    setTimeout(() => { e.target.textContent = "診断内容をコピー"; }, 1500);
+  });
 
   // ---------- 初期化 ----------
   (function init() {
     storageOK = checkStorage();
     if (!storageOK) document.getElementById("storage-warning").classList.remove("hidden");
+    document.getElementById("app-version").textContent = APP_VERSION;
+    if (IS_TEST) document.querySelectorAll(".js-test-badge").forEach(b => b.classList.remove("hidden"));
     document.getElementById("panel-visit").innerHTML = buildVisitHTML();
     document.getElementById("panel-checklist").innerHTML = buildChecklistHTML();
-    entries = loadEntries();
+    entries = storageOK ? loadEntries() : [];
     showList();
+    // ブラウザによる自動削除の対象から外すよう要求する
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist()
+        .then(r => { persistResult = r ? "許可" : "不許可"; })
+        .catch(e => { persistResult = "エラー"; logError("persist", e); });
+    } else {
+      persistResult = "未対応";
+    }
   })();
 
   // ---------- PWA: service worker登録（https公開後に有効化されます） ----------
