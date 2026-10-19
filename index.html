@@ -140,6 +140,7 @@
   .data-tools-title { font-size: 0.8rem; color: var(--gold); letter-spacing: 0.08em; margin: 0 0 0.8rem; }
   .data-tools-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.6rem; }
   .data-tools-note { font-size: 0.7rem; color: var(--sub); margin: 0.6rem 0 0.2rem; min-height: 1em; }
+  .data-tools-warning { font-size: 0.74rem; color: #b5413a; margin: 0.4rem 0; }
   .app-version { text-align: center; font-size: 0.7rem; color: var(--sub); margin-top: 1.4rem; }
   .diag-output {
     white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, Menlo, Consolas, monospace;
@@ -242,6 +243,7 @@
         <button class="pill-button" id="btn-import">JSONから読み込み</button>
       </div>
       <p class="data-tools-note" id="last-export">&nbsp;</p>
+      <p class="data-tools-warning hidden" id="unsaved-warning">保存できていない編集があります（保存容量が一杯の可能性があります）。書き出しには、保存済みの内容だけが入ります。</p>
       <div>
         <button class="link-button" id="btn-export-download">ファイルとしてダウンロード</button>
         <button class="link-button" id="btn-open-guide">iPhoneでの保存について</button>
@@ -470,6 +472,9 @@
   let loadFailure = null;   // 読み込みに失敗したとき { raw, error }。この間は保存しない
   let persistResult = "未要求";
   let saveTimer = null;
+  let lastRaw = null;       // この画面が最後に読んだ／書いた保存内容。保存直前にこれと違えば他の画面が書き換えている
+  let unsavedEdits = false; // 保存に失敗した編集が残っているか
+  let currentScreen = "list";
 
   // ---------- エラーログ（shrine-errorlog に直近10件） ----------
   const memoryErrorLog = [];
@@ -524,11 +529,25 @@
       return false;
     }
   }
+  function isPlainObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
+  // 1件の記録の問題点。なければ null（画面が前提にしている型だけを確かめる）
+  function entryProblem(e) {
+    if (!isPlainObject(e)) return "記録になっていません";
+    if (typeof e.id !== "string" || !e.id) return "id がありません";
+    if (e.name !== undefined && typeof e.name !== "string") return "name が文字列ではありません";
+    if (e.checks !== undefined && !isPlainObject(e.checks)) return "checks の形式が正しくありません";
+    if (e.visit !== undefined && !isPlainObject(e.visit)) return "visit の形式が正しくありません";
+    if (e.updatedAt !== undefined && typeof e.updatedAt !== "number") return "updatedAt が数値ではありません";
+    return null;
+  }
   // 記録の配列として正しい形か。問題があれば理由の文字列、なければ null
   function validateEntries(list) {
     if (!Array.isArray(list)) return "記録の配列になっていません";
-    const i = list.findIndex(e => !e || typeof e !== "object" || Array.isArray(e) || typeof e.id !== "string" || !e.id);
-    return i >= 0 ? `${i + 1}件目の形式が正しくありません` : null;
+    for (let i = 0; i < list.length; i++) {
+      const problem = entryProblem(list[i]);
+      if (problem) return `${i + 1}件目の形式が正しくありません（${problem}）`;
+    }
+    return null;
   }
   // 保存されている最新の記録を読む。{ ok, raw, list } または { ok:false, raw, error }
   function readStored() {
@@ -558,6 +577,8 @@
       return [];
     }
     loadFailure = null;
+    lastRaw = result.raw;
+    document.getElementById("load-error").classList.add("hidden");
     // 旧データ（visitフィールドが無い）にも安全にデフォルトを補う
     return result.list.map(e => ({ checks: {}, visit: {}, ...e }));
   }
@@ -583,11 +604,41 @@
       return;
     }
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      // 別のタブ・ホーム画面アプリが書き換えていたら、古い内容で上書きせずに読み込み直す
+      if (localStorage.getItem(STORAGE_KEY) !== lastRaw) {
+        reloadFromStorage(true);
+        return;
+      }
+      const text = JSON.stringify(entries);
+      localStorage.setItem(STORAGE_KEY, text);
+      lastRaw = text;
+      unsavedEdits = false;
       if (hint) { hint.textContent = "保存しました"; setTimeout(() => { if (hint.textContent === "保存しました") hint.textContent = " "; }, 1200); }
     } catch (e) {
+      unsavedEdits = true;
       if (hint) hint.textContent = "保存できませんでした（保存容量が一杯の可能性があります）";
       logError("save", e);
+    }
+  }
+  // 他の画面が記録を書き換えたときに、保存内容を読み直して画面に反映する。
+  // lostEdit: この画面の保存していない入力を捨てたか（知らせるため）
+  function reloadFromStorage(lostEdit) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    unsavedEdits = false;
+    const id = currentId;
+    const tab = currentTab;
+    entries = loadEntries();
+    if (currentScreen === "detail" && entries.some(e => e.id === id)) {
+      openDetail(id);
+      showTab(tab);
+    } else if (currentScreen === "detail" || currentScreen === "list") {
+      showList();
+    }
+    if (lostEdit) {
+      alert("別のタブまたはホーム画面のアプリで記録が変更されていたため、最新の内容を読み込み直しました。\nこの画面での直前の操作は保存されていません。もう一度入力してください。");
+    } else if (currentScreen === "detail") {
+      document.getElementById("save-hint").textContent = "別の画面での変更を読み込みました";
     }
   }
 
@@ -700,6 +751,7 @@
   function renderLastExport() {
     const at = readMeta().lastExportAt;
     document.getElementById("last-export").textContent = at ? `最後の書き出し：${formatDateTime(at)}` : "まだ書き出したことがありません";
+    document.getElementById("unsaved-warning").classList.toggle("hidden", !unsavedEdits);
   }
 
   // ---------- 選択ダイアログ ----------
@@ -734,6 +786,11 @@
       alert("JSON ファイルとして読めませんでした。");
       return;
     }
+    if (parsed && !Array.isArray(parsed) && parsed.format === "shrine-checklist-backup") {
+      const v = parsed.formatVersion;
+      if (!Number.isInteger(v) || v < 1) { alert("読み込めませんでした：ファイルの形式の版（formatVersion）が読めません。"); return; }
+      if (v > 1) { alert("このファイルは新しいバージョンのアプリで書き出されています。アプリを最新にしてから読み込んでください。"); return; }
+    }
     // このアプリの書き出し形式、または記録の配列そのもの（生データ）を受け付ける
     const incomingRaw = Array.isArray(parsed) ? parsed
       : (parsed && parsed.format === "shrine-checklist-backup" ? parsed.entries : null);
@@ -762,6 +819,12 @@
           { label: "やめる", value: "cancel" },
         ]);
     if (choice === "cancel") return;
+    // 確認を待つ間に別の画面が書き換えていたら、古い内容を元に合成しないよう中止する
+    if (localStorage.getItem(STORAGE_KEY) !== stored.raw) {
+      alert("確認の間に、別のタブまたはホーム画面のアプリで記録が変更されました。元のデータは変更していません。もう一度読み込んでください。");
+      reloadFromStorage(false);
+      return;
+    }
 
     // 読み込み前の状態を丸ごと残す。残せなければ元データに書かずに中止する
     let backupKey = null;
@@ -857,8 +920,9 @@
         const dbs = await indexedDB.databases();
         const mine = dbs.find(d => d.name === "shrine-checklist");
         L.push(`shrine-checklist: ${mine ? `作成済み（version ${mine.version}）` : "未作成"}`);
-        const others = dbs.filter(d => d.name !== "shrine-checklist").map(d => d.name);
-        if (others.length) L.push(`その他のデータベース: ${others.join(", ")}`);
+        // 同じドメインの他のアプリの名前は出さない（診断内容を貼る場所によっては公開されるため）
+        const others = dbs.filter(d => d.name !== "shrine-checklist").length;
+        if (others) L.push(`その他のデータベース: ${others}件`);
       } else {
         L.push(window.indexedDB ? "一覧の取得に未対応のブラウザ" : "IndexedDB: 未対応");
       }
@@ -1105,7 +1169,7 @@
       const nameClass = e.name && e.name.trim() ? "name" : "name empty";
       const visitTag = hasVisitData(e) ? `<span class="tag">現地記録あり</span>` : "";
       return `
-        <button class="shrine-card" data-id="${e.id}">
+        <button class="shrine-card" data-id="${escapeHTML(e.id)}">
           <div class="${nameClass}">${escapeHTML(name)}</div>
           <div class="tags">${visitTag}</div>
           <div class="meta"><span>チェックリスト ${checked} / ${total}</span><span>更新: ${formatDate(e.updatedAt)}</span></div>
@@ -1132,6 +1196,7 @@
   // ---------- 画面切り替え ----------
   const SCREEN_TITLES = { list: "神社訪問記録", detail: "神社記録", diag: "診断", guide: "iPhoneでの保存について" };
   function showScreen(name) {
+    currentScreen = name;
     Object.keys(SCREEN_TITLES).forEach(s => document.getElementById(`screen-${s}`).classList.toggle("hidden", s !== name));
     document.getElementById("page-title").textContent = SCREEN_TITLES[name];
     window.scrollTo(0, 0);
@@ -1230,6 +1295,13 @@
   }
   document.getElementById("panel-visit").addEventListener("input", handleVisitFieldChange);
   document.getElementById("panel-visit").addEventListener("change", handleVisitFieldChange);
+
+  // 別のタブ・ホーム画面アプリ（Android では保存場所が同じ）が記録を書き換えたら読み直す
+  window.addEventListener("storage", (e) => {
+    if (!storageOK || (e.key !== null && e.key !== STORAGE_KEY)) return;
+    if (e.key !== null && e.newValue === lastRaw) return;
+    reloadFromStorage(saveTimer !== null || unsavedEdits);
+  });
 
   // データの保管・診断
   document.getElementById("btn-export").addEventListener("click", () => exportAll("auto").catch(e => logError("export", e)));
