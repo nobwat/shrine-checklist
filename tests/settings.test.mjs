@@ -6,13 +6,15 @@ import { FakeStorage, loadCore } from "./helpers.mjs";
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
 const stored = (core) => JSON.parse(core.storage.getItem(core.SETTINGS_KEY));
+// 時間帯の境界の既定値（5-1 で設定に加わった）
+const TB = { early: "04:00", day: "07:00", evening: "16:00", night: "19:00" };
 
 // ---------- 読む ----------
 
-test("readSettings: 保存されていなければ既定値（写真2048・録音3分）", () => {
+test("readSettings: 保存されていなければ既定値（写真2048・録音3分・時間帯の既定の境界）", () => {
   const core = loadCore();
   assert.equal(core.SETTINGS_KEY, "shrine-settings");
-  assert.deepEqual(core.readSettings(), { photoMaxEdge: 2048, audioMaxSec: 180 });
+  assert.deepEqual(core.readSettings(), { photoMaxEdge: 2048, audioMaxSec: 180, timebands: TB });
   assert.equal(core.storage.getItem(core.SETTINGS_KEY), null, "読むだけでは書かない");
 });
 
@@ -20,17 +22,17 @@ test("readSettings: 壊れた JSON・配列・知らない値は既定値で補�
   for (const raw of ["{壊れた", "[1,2]", "null", JSON.stringify({ photoMaxEdge: 999, audioMaxSec: "180" })]) {
     const core = loadCore();
     core.storage.setItem(core.SETTINGS_KEY, raw);
-    assert.deepEqual(core.readSettings(), { photoMaxEdge: 2048, audioMaxSec: 180 }, raw);
+    assert.deepEqual(core.readSettings(), { photoMaxEdge: 2048, audioMaxSec: 180, timebands: TB }, raw);
   }
 });
 
 test("readSettings: 選べる値はそのまま読む", () => {
   const core = loadCore();
   core.storage.setItem(core.SETTINGS_KEY, JSON.stringify({ photoMaxEdge: "max", audioMaxSec: 600 }));
-  assert.deepEqual(core.readSettings(), { photoMaxEdge: "max", audioMaxSec: 600 });
+  assert.deepEqual(core.readSettings(), { photoMaxEdge: "max", audioMaxSec: 600, timebands: TB });
 });
 
-test("normalizeSettings: STEP 5 で足す項目など、知らない項目は消さずに残す", () => {
+test("normalizeSettings: 5-5 で足す位置の丸めなど、知らない項目は消さずに残す", () => {
   const core = loadCore();
   const tb = { early: "04:00", day: "07:00", evening: "16:00", night: "19:00" };
   assert.deepEqual(core.normalizeSettings({ timebands: tb, roundLocationForApi: true, photoMaxEdge: 1600 }),
@@ -43,9 +45,30 @@ test("writeSettings: 選べる値なら保存し、ほかの項目は残す", ()
   const core = loadCore();
   core.storage.setItem(core.SETTINGS_KEY, JSON.stringify({ roundLocationForApi: false, audioMaxSec: 300 }));
   core.writeSettings({ photoMaxEdge: 1600 });
-  assert.deepEqual(stored(core), { roundLocationForApi: false, audioMaxSec: 300, photoMaxEdge: 1600 });
+  assert.deepEqual(stored(core), { roundLocationForApi: false, audioMaxSec: 300, photoMaxEdge: 1600, timebands: TB });
   core.writeSettings({ photoMaxEdge: "max", audioMaxSec: 60 });
-  assert.deepEqual(core.readSettings(), { roundLocationForApi: false, audioMaxSec: 60, photoMaxEdge: "max" });
+  assert.deepEqual(core.readSettings(), { roundLocationForApi: false, audioMaxSec: 60, photoMaxEdge: "max", timebands: TB });
+});
+
+// ---------- 時間帯の境界（5-1） ----------
+
+test("writeSettings: 時間帯の境界を保存する。並びがおかしい・時刻でなければ何も書かない", () => {
+  const core = loadCore();
+  const ok = { early: "05:00", day: "08:00", evening: "17:00", night: "19:30" };
+  core.writeSettings({ timebands: ok });
+  assert.deepEqual(core.readSettings().timebands, ok);
+  const before = core.storage.getItem(core.SETTINGS_KEY);
+  assert.throws(() => core.writeSettings({ timebands: { ...ok, evening: "07:00" } }), /夕方の始まりは、日中の始まりより後/);
+  assert.throws(() => core.writeSettings({ timebands: { ...ok, night: "17:00" } }), /夜の始まりは、夕方の始まりより後/, "同じ時刻も断る");
+  assert.throws(() => core.writeSettings({ timebands: { ...ok, early: "" } }), /早朝の始まりの時刻が読めません/);
+  assert.throws(() => core.writeSettings({ timebands: { ...ok, day: "25:00" } }), /日中の始まりの時刻が読めません/);
+  assert.equal(core.storage.getItem(core.SETTINGS_KEY), before);
+});
+
+test("readSettings: 保存されている時間帯の境界が壊れていたら、既定値で補う", () => {
+  const core = loadCore();
+  core.storage.setItem(core.SETTINGS_KEY, JSON.stringify({ timebands: { early: "09:00", day: "07:00", evening: "16:00", night: "19:00" } }));
+  assert.deepEqual(core.readSettings().timebands, TB);
 });
 
 test("writeSettings: 選べない値は例外にして、何も書かない", () => {

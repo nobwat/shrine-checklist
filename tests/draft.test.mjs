@@ -15,7 +15,7 @@ const draft = (id, offset, extra = {}) => ({
   createdAt: at(offset), field: { startedAt: at(offset) }, ...extra,
 });
 
-test("newDraftEntry: 下書きの形（status は draft、開始時刻と作成日時は同じ）", () => {
+test("newDraftEntry: 下書きの形（status は draft、開始時刻・参拝日時・作成日時は同じ）", () => {
   const { newDraftEntry, validateEntries } = loadCore();
   const e = newDraftEntry(NOW);
   assert.match(e.id, /^s_[0-9a-z]+$/);
@@ -24,8 +24,24 @@ test("newDraftEntry: 下書きの形（status は draft、開始時刻と作成�
   assert.equal(e.name, "");
   assert.equal(e.updatedAt, NOW.getTime());
   assert.match(e.createdAt, /^2026-10-21T15:00:00[+-]\d\d:\d\d$/);
-  assert.deepEqual(e.field, { startedAt: e.createdAt });
+  assert.deepEqual(e.field, { startedAt: e.createdAt, visitAt: e.createdAt });
   assert.equal(validateEntries([e]), null, "今の判定を通る");
+});
+
+test("newDraftEntry: 参拝日と時間帯を自動で入れ、autoFill に記録する（5-1）", () => {
+  const { newDraftEntry } = loadCore();
+  const e = newDraftEntry(NOW); // 15:00 は既定の境界で「日中」
+  assert.deepEqual(e.visit, { v_date: "2026-10-21", v_timeband: "日中" });
+  assert.deepEqual(e.autoFill, {
+    v_date: { value: "2026-10-21", state: "auto", at: e.createdAt },
+    v_timeband: { value: "日中", state: "auto", at: e.createdAt },
+  });
+});
+
+test("newDraftEntry: 設定の時間帯の境界を使う", () => {
+  const { newDraftEntry } = loadCore();
+  const tb = { early: "04:00", day: "07:00", evening: "14:30", night: "19:00" };
+  assert.equal(newDraftEntry(NOW, tb).visit.v_timeband, "夕方");
 });
 
 test("newEntryId: 同じ時刻に続けて作っても重ならない", () => {

@@ -109,6 +109,10 @@
   }
   .add-button:active { background: rgba(138,109,61,0.08); }
   .shrine-card .tag.draft { color: #fff; background: #b5665a; border-color: #b5665a; }
+  .auto-badge {
+    display: inline-block; font-size: 0.62rem; color: #fff; background: var(--gold-line); border-radius: 999px;
+    padding: 0 0.5rem; margin-left: 0.3rem; letter-spacing: 0.05em; vertical-align: middle;
+  }
 
   /* ---- 現地モード ---- */
   .field-start-button {
@@ -210,6 +214,7 @@
   }
 
   .hidden { display: none !important; }
+  .save-hint.error { color: #b5413a; }
   .save-hint { text-align: center; font-size: 0.7rem; color: var(--sub); margin-top: -0.5rem; margin-bottom: 1.6rem; min-height: 1em; }
   .storage-warning {
     background: #fdf3ee; border: 1px solid #e3c8bb; color: #8a4a34;
@@ -263,6 +268,12 @@
   }
   .settings-options input { accent-color: var(--gold); width: 1.1rem; height: 1.1rem; }
   .settings-options label:has(input:checked) { border-color: var(--gold); background: rgba(138,109,61,0.06); }
+  .settings-times { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+  .settings-times label {
+    display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: var(--sub);
+    padding: 0.5rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
+  }
+  .settings-times input { font-family: inherit; font-size: 1.05rem; border: none; background: transparent; color: var(--ink); }
   .guide { font-size: 0.86rem; }
   .guide h2 { font-size: 0.95rem; font-weight: 500; color: var(--gold); margin: 1.8rem 0 0.6rem; }
   .guide ol, .guide ul { padding-left: 1.4rem; margin: 0.4rem 0; }
@@ -313,7 +324,7 @@
 
   @media print {
     .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
-    .load-error, .test-badge, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
+    .load-error, .test-badge, .auto-badge, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -464,6 +475,16 @@
         <label><input type="radio" name="audioMaxSec" value="180"> 3分</label>
         <label><input type="radio" name="audioMaxSec" value="300"> 5分</label>
         <label><input type="radio" name="audioMaxSec" value="600"> 10分</label>
+      </div>
+    </section>
+    <section>
+      <h2 class="section-title">時間帯の境界</h2>
+      <p class="section-note">現地モードを始めた時刻から、時間帯（早朝・日中・夕方・夜）を自動で入れます。それぞれの始まりの時刻です（夜は日をまたいで、早朝の始まりまで）。変えると、これから作る記録に使います。</p>
+      <div class="settings-times" id="settings-timebands">
+        <label>早朝の始まり <input type="time" data-timeband="early"></label>
+        <label>日中の始まり <input type="time" data-timeband="day"></label>
+        <label>夕方の始まり <input type="time" data-timeband="evening"></label>
+        <label>夜の始まり <input type="time" data-timeband="night"></label>
       </div>
     </section>
     <p class="save-hint" id="settings-hint"> </p>
@@ -1076,12 +1097,17 @@
     const rand = (a.toString(36) + b.toString(36)).padStart(8, "0").slice(-8);
     return "s_" + now.getTime().toString(36) + rand;
   }
-  function newDraftEntry(now) {
+  // 現地モードの新しい下書き。開始時刻を参拝日時とし、参拝日と時間帯を自動で入れる（STEP 5-1）
+  function newDraftEntry(now, timebands = TIMEBANDS_DEFAULT) {
     const at = isoLocal(now);
-    return {
+    const entry = {
       id: newEntryId(now), name: "", checks: {}, visit: {}, updatedAt: now.getTime(),
-      schemaVersion: 2, status: "draft", createdAt: at, field: { startedAt: at },
+      schemaVersion: 2, status: "draft", createdAt: at, field: { startedAt: at, visitAt: at },
     };
+    const plan = planAutoFill(entry, { v_date: at.slice(0, 10), v_timeband: timebandOf(now, timebands) }, now);
+    entry.visit = plan.visit;
+    if (Object.keys(plan.autoFill).length) entry.autoFill = plan.autoFill;
+    return entry;
   }
   function draftStartedAt(e) {
     const t = e && e.field && typeof e.field.startedAt === "string" ? Date.parse(e.field.startedAt) : NaN;
@@ -1265,8 +1291,68 @@
     return [...s].length > max ? [...s].slice(0, max).join("") + "…" : s;
   }
 
+  // ---------- 時間帯（計画書 3.5） ----------
+  // 各時間帯の始まりの時刻。開始時刻が early ≤ t < day なら早朝、day ≤ t < evening なら日中、
+  // evening ≤ t < night なら夕方、それ以外は夜（日をまたぐ）
+  const TIMEBANDS_DEFAULT = { early: "04:00", day: "07:00", evening: "16:00", night: "19:00" };
+  const TIMEBAND_KEYS = ["early", "day", "evening", "night"];
+  const TIMEBAND_LABELS = { early: "早朝", day: "日中", evening: "夕方", night: "夜" }; // 現地記録タブの「時間帯」の選択肢と同じ
+  // "07:00" → 420（分）。読めなければ null
+  function parseHHMM(s) {
+    const m = /^(\d{2}):(\d{2})$/.exec(typeof s === "string" ? s : "");
+    if (!m || Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+    return Number(m[1]) * 60 + Number(m[2]);
+  }
+  // 時間帯の境界の問題点。なければ null（4つとも時刻で、早朝→日中→夕方→夜の順に並んでいること）
+  function timebandsProblem(tb) {
+    if (!isPlainObject(tb)) return "時間帯の形式が正しくありません";
+    const mins = TIMEBAND_KEYS.map(k => parseHHMM(tb[k]));
+    const bad = TIMEBAND_KEYS.find((k, i) => mins[i] === null);
+    if (bad) return `${TIMEBAND_LABELS[bad]}の始まりの時刻が読めません`;
+    for (let i = 1; i < mins.length; i++) {
+      if (mins[i] <= mins[i - 1]) return `${TIMEBAND_LABELS[TIMEBAND_KEYS[i]]}の始まりは、${TIMEBAND_LABELS[TIMEBAND_KEYS[i - 1]]}の始まりより後にしてください`;
+    }
+    return null;
+  }
+  // その日時の時間帯の表示名（早朝・日中・夕方・夜）
+  function timebandOf(date, tb) {
+    const t = date.getHours() * 60 + date.getMinutes();
+    const [early, day, evening, night] = TIMEBAND_KEYS.map(k => parseHHMM(tb[k]));
+    if (early <= t && t < day) return TIMEBAND_LABELS.early;
+    if (day <= t && t < evening) return TIMEBAND_LABELS.day;
+    if (evening <= t && t < night) return TIMEBAND_LABELS.evening;
+    return TIMEBAND_LABELS.night;
+  }
+
+  // ---------- 自動で入れる値（計画書 3.2） ----------
+  const AUTO_FILL_KEYS = ["v_date", "v_timeband", "v_weather"];
+  function isBlankValue(v) {
+    return v === undefined || v === null || (typeof v === "string" && v.trim() === "");
+  }
+  // 自動の値を入れてよい項目と値を選ぶ。条件は「visit の欄が空」かつ「手で直した（manual）ことがない」。
+  // 戻り値：{ visit: { 項目: 値 }, autoFill: { 項目: { value, state: "auto", at } } }（入れるものが無ければ空）
+  function planAutoFill(entry, values, now) {
+    const visit = {}, autoFill = {};
+    const at = isoLocal(now);
+    for (const [key, value] of Object.entries(values)) {
+      if (isBlankValue(value)) continue;
+      if (!isBlankValue(entry.visit && entry.visit[key])) continue;
+      const prev = entry.autoFill && entry.autoFill[key];
+      if (prev && prev.state === "manual") continue; // 一度手で直した項目には、二度と自動で入れない
+      visit[key] = value;
+      autoFill[key] = { value, state: "auto", at };
+    }
+    return { visit, autoFill };
+  }
+  // 「自動」バッジを出すか：今の値が自動で入れた値のままで、手で直していないときだけ
+  // （古い版のアプリで直された場合も、値が違うので自動ではないと分かる）
+  function isAutoValue(entry, key) {
+    const a = entry.autoFill && entry.autoFill[key];
+    return !!a && a.state === "auto" && entry.visit && entry.visit[key] === a.value;
+  }
+
   // ---------- 設定（shrine-settings。計画書 3.5） ----------
-  // STEP 4 で使うのは写真の大きさと録音の上限だけ。ほかの項目（STEP 5 で足す時間帯など）は、読み書きしても消さずに残す
+  // 写真の大きさ・録音の上限・時間帯の境界。ほかの項目（5-5 で足す位置の丸めなど）は、読み書きしても消さずに残す
   const PHOTO_MAX_EDGE_CHOICES = [1600, 2048, "max"];
   function normalizeSettings(raw) {
     const s = isPlainObject(raw) ? raw : {};
@@ -1274,6 +1360,7 @@
       ...s,
       photoMaxEdge: PHOTO_MAX_EDGE_CHOICES.includes(s.photoMaxEdge) ? s.photoMaxEdge : PHOTO_MAX_EDGE_DEFAULT,
       audioMaxSec: AUDIO_MAX_SEC_CHOICES.includes(s.audioMaxSec) ? s.audioMaxSec : AUDIO_MAX_SEC_DEFAULT,
+      timebands: timebandsProblem(s.timebands) ? { ...TIMEBANDS_DEFAULT } : { ...s.timebands },
     };
   }
   // 保存されている設定。無い・壊れている・知らない値のときは既定値で補う（設定が読めなくても現地モードは使える）
@@ -1286,6 +1373,10 @@
   function writeSettings(patch) {
     if ("photoMaxEdge" in patch && !PHOTO_MAX_EDGE_CHOICES.includes(patch.photoMaxEdge)) throw new Error(`写真の大きさに ${patch.photoMaxEdge} は選べません`);
     if ("audioMaxSec" in patch && !AUDIO_MAX_SEC_CHOICES.includes(patch.audioMaxSec)) throw new Error(`録音の上限に ${patch.audioMaxSec} 秒は選べません`);
+    if ("timebands" in patch) {
+      const problem = timebandsProblem(patch.timebands);
+      if (problem) throw new Error(problem);
+    }
     const next = { ...readSettings(), ...patch };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
     return next;
@@ -1467,6 +1558,7 @@
       if (entry) {
         const name = document.getElementById("field-name");
         if (name.value !== (entry.name || "")) name.value = entry.name || "";
+        renderFieldAuto(entry);
       } else {
         fieldId = null;
         showList();
@@ -1885,6 +1977,7 @@
     L.push("", "■ 設定");
     L.push(`写真の大きさ: ${st.photoMaxEdge === "max" ? "元サイズ（最大約1,670万画素）" : `長辺${st.photoMaxEdge}px`}`);
     L.push(`録音の上限: ${formatDuration(st.audioMaxSec)}`);
+    L.push(`時間帯の境界: ${TIMEBAND_KEYS.map(k => `${TIMEBAND_LABELS[k]} ${st.timebands[k]}`).join("・")}`);
 
     L.push("", "■ 録音形式（MediaRecorder）");
     if (typeof MediaRecorder === "undefined") {
@@ -2103,10 +2196,12 @@
   // 現地記録タブの描画
   // =========================================================
   function renderMetaField(f) {
+    // 自動で入れる項目には「自動」バッジの場所を用意する（値が自動のままのときだけ表示）
+    const badge = AUTO_FILL_KEYS.includes(f.id) ? ` <span class="auto-badge hidden" data-auto-for="${f.id}">自動</span>` : "";
     if (f.type === "date" || f.type === "text") {
       return `
         <div class="field">
-          <label for="${f.id}">${f.label}</label>
+          <label for="${f.id}">${f.label}${badge}</label>
           <input id="${f.id}" type="${f.type}" data-visit-id="${f.id}" ${f.placeholder ? `placeholder="${f.placeholder}"` : ""}>
         </div>`;
     }
@@ -2116,7 +2211,7 @@
       `).join("");
       return `
         <div class="field full">
-          <label>${f.label}</label>
+          <label>${f.label}${badge}</label>
           <div class="pill-group">${opts}</div>
         </div>`;
     }
@@ -2317,6 +2412,12 @@
     if (name.value !== (entry.name || "")) name.value = entry.name || "";
     applyVisitToDOM(entry.visit || {});
     applyChecksToDOM(entry.checks || {});
+    renderAutoBadges(entry);
+  }
+  function renderAutoBadges(entry) {
+    document.querySelectorAll("#panel-visit [data-auto-for]").forEach(b => {
+      b.classList.toggle("hidden", !isAutoValue(entry, b.dataset.autoFor));
+    });
   }
 
   // =========================================================
@@ -2348,7 +2449,7 @@
     else startNewDraft();
   }
   function startNewDraft() {
-    const entry = newDraftEntry(new Date());
+    const entry = newDraftEntry(new Date(), readSettings().timebands);
     entries.push(entry);
     recordChange({ op: "add", entry });
     saveEntries();
@@ -2358,11 +2459,17 @@
     fieldId = entry.id;
     document.getElementById("field-resume").classList.toggle("hidden", !resumed);
     document.getElementById("field-name").value = entry.name || "";
-    document.getElementById("field-started").textContent = draftStartedAt(entry) === null ? "" : `開始 ${formatDateTime(entry.field.startedAt)}`;
+    renderFieldAuto(entry);
     hideLabelPanel();
     hideMicHelp();
     setFieldStatus("");
     renderFieldItems().catch(e => logError("field-items", e));
+  }
+  // 現地モードの上に、参拝日時と時間帯を出す（時間帯は現地記録タブの値。手で直していればその値）
+  function renderFieldAuto(entry) {
+    const at = entry.field && (entry.field.visitAt || entry.field.startedAt);
+    const band = entry.visit && entry.visit.v_timeband;
+    document.getElementById("field-started").textContent = at ? `参拝 ${formatDateTime(at)}${band ? `（${band}）` : ""}` : "";
   }
   function setFieldStatus(text, isError) {
     const el = document.getElementById("field-status");
@@ -2943,7 +3050,10 @@
     const s = readSettings();
     document.querySelectorAll("#settings-photo input").forEach(i => { i.checked = i.value === String(s.photoMaxEdge); });
     document.querySelectorAll("#settings-audio input").forEach(i => { i.checked = Number(i.value) === s.audioMaxSec; });
-    document.getElementById("settings-hint").textContent = " ";
+    document.querySelectorAll("#settings-timebands input").forEach(i => { i.value = s.timebands[i.dataset.timeband]; });
+    const hint = document.getElementById("settings-hint");
+    hint.textContent = " ";
+    hint.classList.remove("error");
   }
   function onSettingChange(e) {
     const t = e.target;
@@ -2951,14 +3061,27 @@
     let patch;
     if (t.name === "photoMaxEdge") patch = { photoMaxEdge: t.value === "max" ? "max" : Number(t.value) };
     else if (t.name === "audioMaxSec") patch = { audioMaxSec: Number(t.value) };
-    else return;
+    else if (t.dataset.timeband) {
+      const timebands = {};
+      document.querySelectorAll("#settings-timebands input").forEach(i => { timebands[i.dataset.timeband] = i.value; });
+      // 並びがおかしいときは保存しない（入力の途中かもしれないので、エラーログには残さない）
+      const problem = timebandsProblem(timebands);
+      if (problem) {
+        hint.textContent = `保存していません：${problem}`;
+        hint.classList.add("error");
+        return;
+      }
+      patch = { timebands };
+    } else return;
     try {
       writeSettings(patch);
       hint.textContent = "保存しました";
+      hint.classList.remove("error");
     } catch (err) {
       logError("settings", err);
       showSettings(settingsReturn); // 保存されている値の表示に戻す
       hint.textContent = `保存できませんでした（${err.message}）`;
+      hint.classList.add("error");
     }
   }
   function closeSettings() {
@@ -3173,6 +3296,12 @@
       if (li) li.classList.toggle("checked", el.checked);
     } else {
       editEntry(entry, "visit", id, el.value);
+    }
+    // 自動で入れた項目を手で直したら「手動」にする。以後、その項目には自動の値を入れない（空欄に戻しても）
+    const auto = entry.autoFill && entry.autoFill[id];
+    if (auto && auto.state !== "manual") {
+      editEntry(entry, "autoFill", id, { ...auto, state: "manual", at: isoLocal(new Date()) });
+      renderAutoBadges(entry);
     }
     scheduleSave(400);
   }

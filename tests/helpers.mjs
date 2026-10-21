@@ -33,6 +33,8 @@ const EXPORTS = [
   "requestScreenWakeLock", "releaseScreenWakeLock",
   "MEMO_SAVE_DELAY_MS", "textByteSize", "newMemoMeta", "memoPreview",
   "PHOTO_MAX_EDGE_CHOICES", "normalizeSettings", "readSettings", "writeSettings", "storageWarning",
+  "TIMEBANDS_DEFAULT", "TIMEBAND_LABELS", "parseHHMM", "timebandsProblem", "timebandOf",
+  "AUTO_FILL_KEYS", "planAutoFill", "isAutoValue",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする
