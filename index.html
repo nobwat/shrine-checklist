@@ -108,6 +108,43 @@
     background: none; border: 1px dashed var(--gold-line); color: var(--gold); padding: 0.9rem; border-radius: 8px; cursor: pointer;
   }
   .add-button:active { background: rgba(138,109,61,0.08); }
+  .shrine-card .tag.draft { color: #fff; background: #b5665a; border-color: #b5665a; }
+
+  /* ---- 現地モード ---- */
+  .field-start-button {
+    display: block; width: 100%; margin: 0 0 1.6rem; font-family: inherit; font-size: 1rem; letter-spacing: 0.08em;
+    background: var(--gold); border: none; color: #fff; padding: 1rem; border-radius: 8px; cursor: pointer;
+  }
+  .field-start-button:active { opacity: 0.85; }
+  /* 下半分のボタンに隠れないよう、一覧の下に余白を取る */
+  #screen-field { padding-bottom: 48vh; }
+  .field-banner {
+    font-size: 0.8rem; background: rgba(138,109,61,0.08); border-radius: 6px;
+    padding: 0.6rem 0.8rem; margin: 0 0 1rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  }
+  .field-warning { font-size: 0.82rem; background: #fdf3ee; border: 1px solid #e3c8bb; color: #8a4a34; border-radius: 6px; padding: 0.9rem 1rem; }
+  .field-name-row { display: flex; align-items: baseline; gap: 0.6rem; border-bottom: 1px solid var(--gold-line); padding-bottom: 0.3rem; }
+  .field-name-row label { font-size: 0.78rem; color: var(--sub); white-space: nowrap; }
+  .field-name-row input {
+    flex: 1; min-width: 0; border: none; background: transparent; font-family: inherit; font-size: 1.05rem; color: var(--ink); outline: none;
+  }
+  .field-started { font-size: 0.72rem; color: var(--sub); margin: 0.4rem 0 1.2rem; }
+  .field-items-empty { font-size: 0.82rem; color: var(--sub); text-align: center; padding: 1.6rem 0.5rem; border: 1px dashed var(--border); border-radius: 6px; }
+  /* 片手の親指で押せるよう、画面の下半分に大きなボタンを並べる */
+  .field-actions {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--bg);
+    border-top: 1px solid var(--border); padding: 0.8rem 1rem calc(0.8rem + env(safe-area-inset-bottom));
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; max-width: 640px; margin: 0 auto;
+  }
+  .field-big {
+    font-family: inherit; font-size: 1.15rem; letter-spacing: 0.1em; min-height: 18vh;
+    border: 2px solid var(--gold); background: #fff; color: var(--gold); border-radius: 12px; cursor: pointer;
+  }
+  .field-big.photo { grid-column: 1 / -1; background: var(--gold); color: #fff; }
+  .field-big:active { opacity: 0.8; }
+  .field-big:disabled { border-color: var(--border); background: #f1efe9; color: #aaa; }
+  .field-big small { display: block; font-size: 0.62rem; letter-spacing: 0.02em; }
+
   .hidden { display: none !important; }
   .save-hint { text-align: center; font-size: 0.7rem; color: var(--sub); margin-top: -0.5rem; margin-bottom: 1.6rem; min-height: 1em; }
   .storage-warning {
@@ -205,7 +242,7 @@
 
   @media print {
     .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
-    .load-error, .test-badge, #screen-diag, #screen-guide, .modal { display: none !important; }
+    .load-error, .test-badge, #screen-diag, #screen-guide, #screen-field, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -241,6 +278,7 @@
   <!-- 一覧画面 -->
   <div id="screen-list">
     <p class="intro">訪れた神社ごとに記録を残せます。タップして続きから入力できます。<br>データはこの端末・このブラウザの中だけに保存されます。</p>
+    <button class="field-start-button" id="btn-field-start">現地モードを始める</button>
     <div id="shrine-list"></div>
     <button class="add-button" id="btn-add">＋ 新しい神社を追加</button>
 
@@ -260,6 +298,36 @@
       <input type="file" id="import-file" accept=".json,application/json" class="hidden">
     </div>
     <p class="app-version">バージョン <span id="app-version"></span> <span class="test-badge js-test-badge hidden">テスト版</span></p>
+  </div>
+
+  <!-- 現地モード画面 -->
+  <div id="screen-field" class="hidden">
+    <div class="toolbar">
+      <button class="back" id="btn-field-close">← 閉じる</button>
+    </div>
+    <p class="field-warning hidden" id="field-unavailable">
+      この環境では現地モードを使えません（写真・録音・メモの保存先を開けないため。プライベートブラウズ中などに起こります）。<br>
+      普通の記録は、一覧の「＋ 新しい神社を追加」から今までどおり付けられます。
+    </p>
+    <div id="field-body">
+      <p class="field-banner hidden" id="field-resume">
+        <span>前回の下書きを続けています</span>
+        <button class="link-button" id="btn-field-new">新しく始める</button>
+      </p>
+      <div class="field-name-row">
+        <label for="field-name">神社名</label>
+        <input type="text" id="field-name" placeholder="あとで入力してもかまいません" autocomplete="off">
+      </div>
+      <p class="field-started" id="field-started"></p>
+      <div id="field-items">
+        <p class="field-items-empty">まだ写真・録音・メモはありません。<br>下のボタンから残せます。</p>
+      </div>
+      <div class="field-actions">
+        <button class="field-big photo" id="btn-field-photo" disabled>写真<small>（4-2 で使えるようになります）</small></button>
+        <button class="field-big" id="btn-field-audio" disabled>録音<small>（4-3 で使えるようになります）</small></button>
+        <button class="field-big" id="btn-field-memo" disabled>メモ<small>（4-4 で使えるようになります）</small></button>
+      </div>
+    </div>
   </div>
 
   <!-- 診断画面 -->
@@ -502,6 +570,7 @@
   let lastRaw = null;       // この画面が最後に読んだ／書いた保存内容。保存時にこれと違えば他の画面が書き換えている
   let unsavedEdits = false; // 保存に失敗した編集が残っているか
   let currentScreen = "list";
+  let fieldId = null;       // 現地モードで開いている下書きの id
 
   // ---------- エラーログ（shrine-errorlog に直近10件） ----------
   const memoryErrorLog = [];
@@ -859,6 +928,45 @@
     }
     return { total: mediaList.length, byType, orphans };
   }
+  // ---------- 現地モードの下書き（計画書 リスク20） ----------
+  const DRAFT_RESUME_MS = 6 * 60 * 60 * 1000; // この時間内に始めた下書きは、続きから再開する
+  function newEntryId(now) {
+    return "s_" + now.getTime().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+  function newDraftEntry(now) {
+    const at = isoLocal(now);
+    return {
+      id: newEntryId(now), name: "", checks: {}, visit: {}, updatedAt: now.getTime(),
+      schemaVersion: 2, status: "draft", createdAt: at, field: { startedAt: at },
+    };
+  }
+  function draftStartedAt(e) {
+    const t = e && e.field && typeof e.field.startedAt === "string" ? Date.parse(e.field.startedAt) : NaN;
+    return isNaN(t) ? null : t;
+  }
+  // 続きから再開する下書き：6時間以内に始めたもののうち、いちばん新しいもの。無ければ null
+  function findResumableDraft(list, now) {
+    let best = null, bestAt = -Infinity;
+    for (const e of list) {
+      if (e.status !== "draft") continue;
+      const t = draftStartedAt(e);
+      if (t === null || now.getTime() - t > DRAFT_RESUME_MS || t > now.getTime() + 60 * 1000) continue;
+      if (t > bestAt) { best = e; bestAt = t; }
+    }
+    return best;
+  }
+  // 空の下書き：写真・録音・メモが0件で、神社名も空（位置・天候だけでは中身ありにしない）
+  function isEmptyDraft(e, mediaCount) {
+    return e.status === "draft" && !(typeof e.name === "string" && e.name.trim()) && mediaCount === 0;
+  }
+  // 起動時に消す下書きの id。再開の対象（6時間以内）は、別の画面で使っている途中かもしれないので残す
+  function staleEmptyDraftIds(list, countsByVisit, now) {
+    return list
+      .filter(e => isEmptyDraft(e, countsByVisit.get(e.id) || 0))
+      .filter(e => { const t = draftStartedAt(e); return t === null || now.getTime() - t > DRAFT_RESUME_MS; })
+      .map(e => e.id);
+  }
+
   // 「この神社を削除」の確認文。media は summarizeMedia の結果、IndexedDB を読めなかったときは null
   function deleteConfirmText(media) {
     if (!media) {
@@ -1018,6 +1126,16 @@
       } else {
         showList();
         alert("この記録は、別のタブまたはホーム画面のアプリで削除されました。");
+      }
+    } else if (currentScreen === "field" && fieldId) {
+      const entry = entries.find(e => e.id === fieldId);
+      if (entry) {
+        const name = document.getElementById("field-name");
+        if (name.value !== (entry.name || "")) name.value = entry.name || "";
+      } else {
+        fieldId = null;
+        showList();
+        alert("この下書きは、別のタブまたはホーム画面のアプリで削除されました。");
       }
     } else if (currentScreen === "list") {
       renderList();
@@ -1269,6 +1387,14 @@
       idbRequest(tx.objectStore("kv").get("createdAt")),
     ]);
     return { version: db.version, createdAt: created && created.value, blobs, recChunks, ...summarizeMedia(media, entryIds) };
+  }
+  // 記録ごとのメディアの件数（visitId → 件数）
+  async function mediaCountsByVisit() {
+    const db = await openMediaDB();
+    const list = await idbRequest(db.transaction("media", "readonly").objectStore("media").getAll());
+    const counts = new Map();
+    list.forEach(m => counts.set(m.visitId, (counts.get(m.visitId) || 0) + 1));
+    return counts;
   }
   // 1つの記録のメディアの件数（summarizeMedia の形）
   async function countMediaOfVisit(visitId) {
@@ -1716,11 +1842,12 @@
       const pct = Math.round((checked / total) * 100);
       const name = e.name && e.name.trim() ? e.name : "（名称未設定）";
       const nameClass = e.name && e.name.trim() ? "name" : "name empty";
+      const draftTag = e.status === "draft" ? `<span class="tag draft">下書き</span>` : "";
       const visitTag = hasVisitData(e) ? `<span class="tag">現地記録あり</span>` : "";
       return `
         <button class="shrine-card" data-id="${escapeHTML(e.id)}">
           <div class="${nameClass}">${escapeHTML(name)}</div>
-          <div class="tags">${visitTag}</div>
+          <div class="tags">${draftTag}${visitTag}</div>
           <div class="meta"><span>チェックリスト ${checked} / ${total}</span><span>更新: ${formatDate(e.updatedAt)}</span></div>
           <div class="progress-bar"><span style="width:${pct}%"></span></div>
         </button>`;
@@ -1743,7 +1870,7 @@
   }
 
   // ---------- 画面切り替え ----------
-  const SCREEN_TITLES = { list: "神社訪問記録", detail: "神社記録", diag: "診断", guide: "iPhoneでの保存について" };
+  const SCREEN_TITLES = { list: "神社訪問記録", detail: "神社記録", field: "現地モード", diag: "診断", guide: "iPhoneでの保存について" };
   function showScreen(name) {
     currentScreen = name;
     Object.keys(SCREEN_TITLES).forEach(s => document.getElementById(`screen-${s}`).classList.toggle("hidden", s !== name));
@@ -1772,12 +1899,103 @@
     applyChecksToDOM(entry.checks || {});
   }
 
+  // =========================================================
+  // 現地モード（STEP 4）。写真・録音・メモは下書きの記録にひも付けて IndexedDB に入れる
+  // =========================================================
+  async function openFieldMode() {
+    if (!storageOK) { alert("このブラウザでは保存機能が使えないため、現地モードを使えません。"); return; }
+    if (loadFailure) { alert("データを守るため保存を止めているので、現地モードを使えません。"); return; }
+    flushPendingSave();
+    showScreen("field");
+    const body = document.getElementById("field-body");
+    const unavailable = document.getElementById("field-unavailable");
+    try {
+      await openMediaDB();
+    } catch (e) {
+      // メモも IndexedDB に入れるので、開けなければ下書きを作らない
+      fieldId = null;
+      body.classList.add("hidden");
+      unavailable.classList.remove("hidden");
+      return;
+    }
+    body.classList.remove("hidden");
+    unavailable.classList.add("hidden");
+    const draft = findResumableDraft(entries, new Date());
+    if (draft) showFieldDraft(draft, true);
+    else startNewDraft();
+  }
+  function startNewDraft() {
+    const entry = newDraftEntry(new Date());
+    entries.push(entry);
+    recordChange({ op: "add", entry });
+    saveEntries();
+    showFieldDraft(entry, false);
+  }
+  function showFieldDraft(entry, resumed) {
+    fieldId = entry.id;
+    document.getElementById("field-resume").classList.toggle("hidden", !resumed);
+    document.getElementById("field-name").value = entry.name || "";
+    document.getElementById("field-started").textContent = draftStartedAt(entry) === null ? "" : `開始 ${formatDateTime(entry.field.startedAt)}`;
+  }
+  // 下書きが空なら消す（閉じるとき・新しく始めるとき）。メディアの件数が分からなければ消さない
+  async function discardIfEmpty(id) {
+    let count;
+    try {
+      count = (await countMediaOfVisit(id)).total;
+    } catch (e) {
+      return;
+    }
+    const entry = entries.find(e => e.id === id);
+    if (!entry || !isEmptyDraft(entry, count)) return;
+    entries = entries.filter(e => e.id !== id);
+    recordChange({ op: "delete", id });
+    saveEntries();
+  }
+  async function closeFieldMode() {
+    flushPendingSave();
+    const id = fieldId;
+    fieldId = null;
+    if (id) await discardIfEmpty(id);
+    showList();
+  }
+  async function restartField() {
+    flushPendingSave();
+    const id = fieldId;
+    if (id) await discardIfEmpty(id);
+    startNewDraft();
+  }
+  // 起動時：6時間より前に始めた空の下書きを消す（それより新しいものは、別の画面で使っている途中かもしれない）
+  async function cleanupStaleDrafts() {
+    if (!storageOK || loadFailure) return;
+    let counts;
+    try {
+      counts = await mediaCountsByVisit();
+    } catch (e) {
+      return;
+    }
+    const ids = staleEmptyDraftIds(entries, counts, new Date());
+    if (!ids.length) return;
+    entries = entries.filter(e => !ids.includes(e.id));
+    ids.forEach(id => recordChange({ op: "delete", id }));
+    saveEntries();
+    if (currentScreen === "list") renderList();
+  }
+
   // ---------- イベント ----------
+  document.getElementById("btn-field-start").addEventListener("click", () => openFieldMode().catch(e => logError("field", e)));
+  document.getElementById("btn-field-close").addEventListener("click", () => closeFieldMode().catch(e => { logError("field", e); showList(); }));
+  document.getElementById("btn-field-new").addEventListener("click", () => restartField().catch(e => logError("field", e)));
+  document.getElementById("field-name").addEventListener("input", (e) => {
+    const entry = entries.find(x => x.id === fieldId);
+    if (!entry) return;
+    editEntry(entry, "name", undefined, e.target.value);
+    scheduleSave(500);
+  });
   document.getElementById("btn-add").addEventListener("click", () => {
     if (loadFailure) { alert("記録データを読み込めなかったため、保存を止めています。新しい記録は追加できません。"); return; }
     const now = new Date();
     const entry = {
-      id: "s_" + now.getTime().toString(36) + Math.random().toString(36).slice(2, 6), name: "", checks: {}, visit: {}, updatedAt: now.getTime(),
+      id: newEntryId(now), name: "", checks: {}, visit: {}, updatedAt: now.getTime(),
       schemaVersion: 2, status: "final", createdAt: isoLocal(now),
     };
     entries.push(entry);
@@ -1924,7 +2142,8 @@
     entries = storageOK ? loadEntries() : [];
     showList();
     // 写真・録音用の DB を用意する。開けなくても文字の記録には影響しない（理由は診断画面に出す）
-    openMediaDB().catch(() => {});
+    // 開けたら、古い空の下書きを片付ける
+    openMediaDB().then(() => cleanupStaleDrafts().catch(e => logError("draft-cleanup", e)), () => {});
     // ブラウザによる自動削除の対象から外すよう要求する
     if (navigator.storage && navigator.storage.persist) {
       navigator.storage.persist()

@@ -25,6 +25,7 @@ const EXPORTS = [
   "readMeta", "listBackups", "makeBackup", "pruneBackups", "migrateEntries", "verifyMigration", "runMigration", "recordMigration",
   "summarizeMedia", "deleteConfirmText",
   "restoreBackup", "parseExportFile", "compareWithExport", "compareVerdict",
+  "DRAFT_RESUME_MS", "newEntryId", "newDraftEntry", "findResumableDraft", "isEmptyDraft", "staleEmptyDraftIds",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする
