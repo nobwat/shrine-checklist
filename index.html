@@ -472,7 +472,8 @@
   let loadFailure = null;   // 読み込みに失敗したとき { raw, error }。この間は保存しない
   let persistResult = "未要求";
   let saveTimer = null;
-  let lastRaw = null;       // この画面が最後に読んだ／書いた保存内容。保存直前にこれと違えば他の画面が書き換えている
+  let pendingChanges = [];  // まだ保存していない変更（applyChanges の形式）
+  let lastRaw = null;       // この画面が最後に読んだ／書いた保存内容。保存時にこれと違えば他の画面が書き換えている
   let unsavedEdits = false; // 保存に失敗した編集が残っているか
   let currentScreen = "list";
 
@@ -529,6 +530,7 @@
       return false;
     }
   }
+  // ==== data-core:start ====（画面に触れない処理。tests/ が取り出して試す）
   function isPlainObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
   // 1件の記録の問題点。なければ null（画面が前提にしている型だけを確かめる）
   function entryProblem(e) {
@@ -562,6 +564,58 @@
     const problem = validateEntries(parsed);
     return problem ? { ok: false, raw, error: problem } : { ok: true, raw, list: parsed };
   }
+  // 変更を記録の配列に当てる（list を書き換えて返す）。変更の形式：
+  //   { op: "add", entry } / { op: "delete", id }
+  //   { op: "set", id, field, key, value }（key が無ければ field そのものを value にする）
+  //   { op: "replace", id, field, value }（タブのリセットなど、field を丸ごと置き換える）
+  // 他の画面で削除された記録への変更は捨てる（削除を優先する）
+  function applyChanges(list, changes) {
+    for (const c of changes) {
+      if (c.op === "add") {
+        if (!list.some(e => e.id === c.entry.id)) list.push(JSON.parse(JSON.stringify(c.entry)));
+        continue;
+      }
+      const i = list.findIndex(e => e.id === c.id);
+      if (i < 0) continue;
+      const e = list[i];
+      if (c.op === "delete") {
+        list.splice(i, 1);
+      } else if (c.op === "replace") {
+        e[c.field] = JSON.parse(JSON.stringify(c.value));
+      } else if (c.op === "set" && c.key === undefined) {
+        // updatedAt は新しい方を残す（他の画面の後の更新を古い時刻で戻さない）
+        if (c.field === "updatedAt" && typeof e.updatedAt === "number" && e.updatedAt > c.value) continue;
+        e[c.field] = c.value;
+      } else if (c.op === "set") {
+        if (!isPlainObject(e[c.field])) e[c.field] = {};
+        e[c.field][c.key] = c.value;
+      }
+    }
+    return list;
+  }
+  // 最新の保存内容を読み直し、変更を当てて書く。書けなければ例外（容量不足など）。
+  // 戻り値：{ ok: true, raw, list, othersChanged } または { ok: false, stored }
+  // othersChanged：lastRaw（この画面が最後に読んだ／書いた内容）から、他の画面が書き換えていたか
+  function commitChanges(changes, lastRaw) {
+    const stored = readStored();
+    if (!stored.ok) return { ok: false, stored };
+    const list = applyChanges(stored.list, changes);
+    const raw = JSON.stringify(list);
+    localStorage.setItem(STORAGE_KEY, raw);
+    return { ok: true, raw, list, othersChanged: stored.raw !== lastRaw };
+  }
+  // ==== data-core:end ====
+
+  // 画面用に、旧データ（visit・checks が無い）へ空の値を補う。保存内容には書かない
+  function withDefaults(list) {
+    return list.map(e => ({ checks: {}, visit: {}, ...e }));
+  }
+  // [] で上書きしてデータを消さないよう、以後の保存を止める
+  function stopSaving(result, where) {
+    loadFailure = result;
+    logError(where, result.error);
+    document.getElementById("load-error").classList.remove("hidden");
+  }
   function loadEntries() {
     let result;
     try {
@@ -570,28 +624,44 @@
       result = { ok: false, raw: null, error: e.message };
     }
     if (!result.ok) {
-      // [] で上書きしてデータを消さないよう、以後の保存を止める
-      loadFailure = result;
-      logError("load", result.error);
-      document.getElementById("load-error").classList.remove("hidden");
+      stopSaving(result, "load");
       return [];
     }
     loadFailure = null;
     lastRaw = result.raw;
     document.getElementById("load-error").classList.add("hidden");
-    // 旧データ（visitフィールドが無い）にも安全にデフォルトを補う
-    return result.list.map(e => ({ checks: {}, visit: {}, ...e }));
+    return withDefaults(result.list);
+  }
+  // 保存する変更を足す。同じ項目への前の変更は、新しい値で置き換わるので捨てる
+  function recordChange(c) {
+    if (c.op === "add") c = { op: "add", entry: JSON.parse(JSON.stringify(c.entry)) };
+    if (c.op === "set") pendingChanges = pendingChanges.filter(p => !(p.op === "set" && p.id === c.id && p.field === c.field && p.key === c.key));
+    pendingChanges.push(c);
+  }
+  // 記録の1項目を変え、保存する変更として記録する（key が無ければ field そのものを変える）
+  function editEntry(entry, field, key, value) {
+    if (key === undefined) {
+      entry[field] = value;
+    } else {
+      entry[field] = entry[field] || {};
+      entry[field][key] = value;
+    }
+    touchEntry(entry);
+    recordChange({ op: "set", id: entry.id, field, key, value });
+  }
+  function touchEntry(entry) {
+    entry.updatedAt = Date.now();
+    recordChange({ op: "set", id: entry.id, field: "updatedAt", value: entry.updatedAt });
   }
   function scheduleSave(ms) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saveTimer = null; saveEntries(); }, ms);
   }
-  // 入力直後の保存待ちがあれば、すぐに保存する（書き出し・読み込みの前に呼ぶ）
+  // 保存待ちや、保存に失敗して残っている変更があれば、すぐに保存する（書き出し・読み込みの前、画面を隠すときに呼ぶ）
   function flushPendingSave() {
-    if (saveTimer === null) return;
     clearTimeout(saveTimer);
     saveTimer = null;
-    saveEntries();
+    if (pendingChanges.length) saveEntries();
   }
   function saveEntries() {
     const hint = document.getElementById("save-hint");
@@ -603,42 +673,60 @@
       if (hint) hint.textContent = "データを読み込めなかったため、保存を止めています";
       return;
     }
+    if (!pendingChanges.length) return;
+    let result;
     try {
-      // 別のタブ・ホーム画面アプリが書き換えていたら、古い内容で上書きせずに読み込み直す
-      if (localStorage.getItem(STORAGE_KEY) !== lastRaw) {
-        reloadFromStorage(true);
-        return;
-      }
-      const text = JSON.stringify(entries);
-      localStorage.setItem(STORAGE_KEY, text);
-      lastRaw = text;
-      unsavedEdits = false;
-      if (hint) { hint.textContent = "保存しました"; setTimeout(() => { if (hint.textContent === "保存しました") hint.textContent = " "; }, 1200); }
+      result = commitChanges(pendingChanges, lastRaw);
     } catch (e) {
+      // 変更は捨てずに残し、次の保存でもう一度書く
       unsavedEdits = true;
       if (hint) hint.textContent = "保存できませんでした（保存容量が一杯の可能性があります）";
       logError("save", e);
+      return;
+    }
+    if (!result.ok) {
+      // 他の画面が読めない内容を書いていた。上書きせずに保存を止める
+      unsavedEdits = true;
+      stopSaving(result.stored, "save");
+      if (hint) hint.textContent = "データを読み込めなかったため、保存を止めています";
+      return;
+    }
+    pendingChanges = [];
+    unsavedEdits = false;
+    lastRaw = result.raw;
+    if (result.othersChanged) {
+      entries = withDefaults(result.list);
+      refreshScreen();
+    }
+    if (hint && currentScreen === "detail") {
+      const text = result.othersChanged ? "保存しました（別の画面での変更も読み込みました）" : "保存しました";
+      hint.textContent = text;
+      setTimeout(() => { if (hint.textContent === text) hint.textContent = " "; }, 1500);
     }
   }
-  // 他の画面が記録を書き換えたときに、保存内容を読み直して画面に反映する。
-  // lostEdit: この画面の保存していない入力を捨てたか（知らせるため）
-  function reloadFromStorage(lostEdit) {
+  // 他の画面が記録を書き換えたときに、保存内容を読み直して画面に反映する（この画面に保存待ちが無いとき）
+  function reloadFromStorage() {
     clearTimeout(saveTimer);
     saveTimer = null;
+    pendingChanges = [];
     unsavedEdits = false;
-    const id = currentId;
-    const tab = currentTab;
     entries = loadEntries();
-    if (currentScreen === "detail" && entries.some(e => e.id === id)) {
-      openDetail(id);
-      showTab(tab);
-    } else if (currentScreen === "detail" || currentScreen === "list") {
-      showList();
-    }
-    if (lostEdit) {
-      alert("別のタブまたはホーム画面のアプリで記録が変更されていたため、最新の内容を読み込み直しました。\nこの画面での直前の操作は保存されていません。もう一度入力してください。");
-    } else if (currentScreen === "detail") {
-      document.getElementById("save-hint").textContent = "別の画面での変更を読み込みました";
+    refreshScreen();
+    if (currentScreen === "detail") document.getElementById("save-hint").textContent = "別の画面での変更を読み込みました";
+  }
+  // 読み直した entries を今の画面に反映する。詳細画面はスクロール位置やタブを動かさない
+  function refreshScreen() {
+    if (currentScreen === "detail") {
+      const entry = entries.find(e => e.id === currentId);
+      if (entry) {
+        fillDetail(entry);
+      } else {
+        showList();
+        alert("この記録は、別のタブまたはホーム画面のアプリで削除されました。");
+      }
+    } else if (currentScreen === "list") {
+      renderList();
+      renderLastExport();
     }
   }
 
@@ -824,7 +912,7 @@
     // 確認を待つ間に別の画面が書き換えていたら、古い内容を元に合成しないよう中止する
     if (localStorage.getItem(STORAGE_KEY) !== stored.raw) {
       alert("確認の間に、別のタブまたはホーム画面のアプリで記録が変更されました。元のデータは変更していません。もう一度読み込んでください。");
-      reloadFromStorage(false);
+      reloadFromStorage();
       return;
     }
 
@@ -1107,8 +1195,8 @@
         if (li) li.classList.toggle("checked", on);
       } else if (el.type === "radio") {
         el.checked = v[id] === el.value;
-      } else {
-        el.value = v[id] || "";
+      } else if (el.value !== (v[id] || "")) {
+        el.value = v[id] || ""; // 同じ値なら触らない（入力中のカーソルを動かさない）
       }
     });
   }
@@ -1214,11 +1302,15 @@
     if (!entry) return;
     currentId = id;
     showScreen("detail");
-    document.getElementById("shrine-name").value = entry.name || "";
-    applyVisitToDOM(entry.visit || {});
-    applyChecksToDOM(entry.checks || {});
+    fillDetail(entry);
     document.getElementById("save-hint").textContent = " ";
     showTab("visit");
+  }
+  function fillDetail(entry) {
+    const name = document.getElementById("shrine-name");
+    if (name.value !== (entry.name || "")) name.value = entry.name || "";
+    applyVisitToDOM(entry.visit || {});
+    applyChecksToDOM(entry.checks || {});
   }
 
   // ---------- イベント ----------
@@ -1226,6 +1318,7 @@
     if (loadFailure) { alert("記録データを読み込めなかったため、保存を止めています。新しい記録は追加できません。"); return; }
     const entry = { id: "s_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: "", checks: {}, visit: {}, updatedAt: Date.now() };
     entries.push(entry);
+    recordChange({ op: "add", entry });
     saveEntries();
     openDetail(entry.id);
   });
@@ -1236,20 +1329,20 @@
     const label = currentTab === "visit" ? "現地記録" : "記事作成チェックリスト";
     if (!confirm(`「${label}」タブの内容をすべてリセットします。よろしいですか？`)) return;
     const entry = entries.find(e => e.id === currentId);
-    if (currentTab === "visit") {
-      entry.visit = {};
-      applyVisitToDOM(entry.visit);
-    } else {
-      entry.checks = {};
-      applyChecksToDOM(entry.checks);
-    }
-    entry.updatedAt = Date.now();
+    const field = currentTab === "visit" ? "visit" : "checks";
+    entry[field] = {};
+    recordChange({ op: "replace", id: entry.id, field, value: {} });
+    if (field === "visit") applyVisitToDOM(entry.visit);
+    else applyChecksToDOM(entry.checks);
+    touchEntry(entry);
     saveEntries();
   });
   document.getElementById("btn-delete").addEventListener("click", () => {
     if (!currentId) return;
     if (!confirm("この神社の記録を削除します。元に戻せません。よろしいですか？")) return;
-    entries = entries.filter(e => e.id !== currentId);
+    const id = currentId;
+    entries = entries.filter(e => e.id !== id);
+    recordChange({ op: "delete", id });
     saveEntries();
     showList();
   });
@@ -1259,8 +1352,7 @@
   document.getElementById("shrine-name").addEventListener("input", (e) => {
     if (!currentId) return;
     const entry = entries.find(x => x.id === currentId);
-    entry.name = e.target.value;
-    entry.updatedAt = Date.now();
+    editEntry(entry, "name", undefined, e.target.value);
     scheduleSave(500);
   });
 
@@ -1268,10 +1360,7 @@
     if (e.target.matches('input[type="checkbox"]')) {
       if (!currentId) return;
       const entry = entries.find(x => x.id === currentId);
-      const id = e.target.dataset.id;
-      entry.checks = entry.checks || {};
-      entry.checks[id] = e.target.checked;
-      entry.updatedAt = Date.now();
+      editEntry(entry, "checks", e.target.dataset.id, e.target.checked);
       e.target.closest("li").classList.toggle("checked", e.target.checked);
       saveEntries();
     }
@@ -1281,29 +1370,30 @@
     const el = e.target.closest("[data-visit-id]");
     if (!el || !currentId) return;
     const entry = entries.find(x => x.id === currentId);
-    entry.visit = entry.visit || {};
     const id = el.dataset.visitId;
     if (el.type === "checkbox") {
-      entry.visit[id] = el.checked;
+      editEntry(entry, "visit", id, el.checked);
       const li = el.closest("li");
       if (li) li.classList.toggle("checked", el.checked);
-    } else if (el.type === "radio") {
-      entry.visit[id] = el.value;
     } else {
-      entry.visit[id] = el.value;
+      editEntry(entry, "visit", id, el.value);
     }
-    entry.updatedAt = Date.now();
     scheduleSave(400);
   }
   document.getElementById("panel-visit").addEventListener("input", handleVisitFieldChange);
   document.getElementById("panel-visit").addEventListener("change", handleVisitFieldChange);
 
-  // 別のタブ・ホーム画面アプリ（Android では保存場所が同じ）が記録を書き換えたら読み直す
+  // 別のタブ・ホーム画面アプリ（Android では保存場所が同じ）が記録を書き換えたら読み直す。
+  // この画面に保存待ちがあれば、最新の内容にその変更を当てて保存する（どちらの変更も消さない）
   window.addEventListener("storage", (e) => {
     if (!storageOK || (e.key !== null && e.key !== STORAGE_KEY)) return;
     if (e.key !== null && e.newValue === lastRaw) return;
-    reloadFromStorage(saveTimer !== null || unsavedEdits);
+    if (pendingChanges.length && !loadFailure) flushPendingSave();
+    else reloadFromStorage();
   });
+  // スマホでは、隠れた画面がそのまま終了されることがある。隠れる前に保存待ちを保存する
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushPendingSave(); });
+  window.addEventListener("pagehide", flushPendingSave);
 
   // データの保管・診断
   document.getElementById("btn-export").addEventListener("click", () => exportAll("auto").catch(e => logError("export", e)));

@@ -17,7 +17,7 @@
 3. **実データ・zip・test-media はコミットしない。** `shrine-backup*.json`、`*.zip`、`test-media/` は `.gitignore` 済み。書き出したファイルはリポジトリのフォルダに置かない。
 4. **main へは、ユーザーの実機確認が終わったものだけ。** PR は Claude が作り、マージはユーザーが GitHub 上で行う。push はユーザーの了承を得てから。
 5. **STEP 2 は main から切った独立ブランチ（`feature/safety-export`）で作り、先に本番へ出す。** 本番に出したあと `feature/field-mode` に main を取り込み、STEP 3〜8 をその上に積む。
-6. 各 STEP は1コミット。直しが出たら「STEP n 修正: …」の追加コミットにする。
+6. STEP 2 までは各 STEP を1コミットにした。STEP 3 以降は区切り（3-1〜3-5）ごとにコミットする。直しが出たら「STEP n 修正: …」の追加コミットにする。
 
 ## これまでの決定事項
 
