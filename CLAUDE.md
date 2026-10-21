@@ -35,6 +35,7 @@
 | 天候 | Open-Meteo（キー不要）。「Weather data by Open-Meteo.com」を表示 |
 | PR の分担 | PR は Claude が作り、マージはユーザーが GitHub で行う |
 | 共有が断られたとき | Chrome は JSON や zip の Web Share を断ることがある（`canShare` が true でも `share` が NotAllowedError になる）。共有が断られたら、エラーとして記録せず、静かにダウンロードに切り替える（利用者が共有画面を閉じた AbortError も記録しない） |
+| 同じ中身のバックアップ | 文字列が完全に一致するバックアップがあれば、新しい日時のキーに移し替えて1件にする（作成を省くと、古い日時のまま整理で消されることがあるため） |
 
 ## リスク一覧と方針
 
@@ -71,4 +72,5 @@ STEP 0（2026-10-17）で挙げたリスク。方針の根拠：決定＝ユー�
 - 2026-10-17：STEP 1 確定。Q1〜Q5 の回答とブランチ手順の修正を `docs/step1-plan.md` に反映（確定版）。
 - 2026-10-18：Cloudflare Pages の設定（計画書2章）が完了（ユーザー作業）。main の公開先は `https://shrine-checklist.pages.dev`。feature ブランチを push するとブランチ別名の確認用 URL が自動で作られる。
 - 2026-10-21：STEP 2 完了。PR #1 を main にマージ済みで、本番（github.io）に反映済み。本番のスマホで全データ書き出しを実施（2件）、診断のエラーは0件。`feature/field-mode` に main を取り込み済み。
-- **次：STEP 3**（`feature/field-mode` で着手）。確認は `https://feature-field-mode.shrine-checklist.pages.dev` で行う。
+- 2026-10-21：STEP 3（保存層と移行処理）を 3-1〜3-5 の5コミットで実装（差分保存・移行処理・IndexedDB 作成・削除とメディアの連動・バックアップからの復元と比較）。PC の Chrome で確認済み。自動テストは tests/（71項目、実行方法は tests/README.md）。バージョン 2.0.0-dev.3。
+- **次：STEP 3 のスマホ確認**（確認用 URL `https://feature-field-mode.shrine-checklist.pages.dev`、計画書 STEP 3 の確認 1〜6）。終わったら STEP 4（現地モード画面）に着手。
