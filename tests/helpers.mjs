@@ -27,7 +27,7 @@ const EXPORTS = [
   "restoreBackup", "parseExportFile", "compareWithExport", "compareVerdict",
   "DRAFT_RESUME_MS", "newEntryId", "newDraftEntry", "findResumableDraft", "isEmptyDraft", "staleEmptyDraftIds",
   "PHOTO_LABELS", "photoLabelName", "PHOTO_MAX_EDGE_DEFAULT", "CANVAS_MAX_PIXELS", "THUMB_EDGE", "fitPhotoSize",
-  "nextMediaSeq", "extForFile", "newMediaId", "newPhotoMeta",
+  "nextMediaSeq", "extForFile", "newMediaId", "newPhotoMeta", "formatMediaSize", "photoSizeText",
   "AUDIO_MIME_CANDIDATES", "AUDIO_MAX_SEC_DEFAULT", "AUDIO_MAX_SEC_CHOICES", "REC_RECOVER_IDLE_MS",
   "pickAudioMime", "audioExt", "formatDuration", "newAudioMeta", "planRecovery",
   "requestScreenWakeLock", "releaseScreenWakeLock",

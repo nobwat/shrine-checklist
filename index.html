@@ -1164,6 +1164,18 @@
     const h = [...b].map(x => x.toString(16).padStart(2, "0")).join("");
     return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
   }
+  // 容量の表示（100KB 未満は KB、それ以上は MB を小数1桁。例：85KB、0.4MB、2.3MB）
+  function formatMediaSize(bytes) {
+    const n = Number(bytes);
+    if (!(n >= 0)) return "容量不明";
+    if (n < 100 * 1024) return `${Math.max(1, Math.round(n / 1024))}KB`;
+    return `${(n / 1024 / 1024).toFixed(1)}MB`;
+  }
+  // 一覧の写真の行に出す大きさ（例：1600×1200・0.4MB）。縮小できなかった写真は縦横が分からない
+  function photoSizeText(meta) {
+    const dims = Number.isInteger(meta.width) && Number.isInteger(meta.height) ? `${meta.width}×${meta.height}` : "大きさ不明";
+    return `${dims}・${formatMediaSize(meta.size)}`;
+  }
   // 写真のメタ情報（media ストアの1件）
   function newPhotoMeta({ id, visitId, seq, now, mimeType, ext, size, width, height, exifStripped }) {
     const at = isoLocal(now);
@@ -2412,6 +2424,7 @@
         }
         row.appendChild(pic);
         info.innerHTML = `${escapeHTML(title)}<span class="sub">${escapeHTML(photoLabelName(m.label) || "ラベルなし（タップで選ぶ）")}</span>`
+          + `<span class="sub">${escapeHTML(photoSizeText(m))}</span>`
           + (m.exifStripped === false ? `<span class="exif">位置情報（EXIF）が残っています</span>` : "");
         info.addEventListener("click", () => showLabelPanel(m.id, m.label));
         pic.addEventListener("click", () => showLabelPanel(m.id, m.label));

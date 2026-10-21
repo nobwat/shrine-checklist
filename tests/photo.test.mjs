@@ -105,6 +105,34 @@ test("newMediaId: crypto.randomUUID が無い端末でも UUID を作れる", ()
   ids.forEach(id => assert.match(id, UUID));
 });
 
+// ---------- 一覧に出す大きさ（4-5 修正） ----------
+
+test("formatMediaSize: 100KB 未満は KB、それ以上は MB を小数1桁", () => {
+  const KB = 1024, MB = 1024 * 1024;
+  assert.equal(core.formatMediaSize(85 * KB), "85KB");
+  assert.equal(core.formatMediaSize(99 * KB), "99KB");
+  assert.equal(core.formatMediaSize(100 * KB), "0.1MB");
+  assert.equal(core.formatMediaSize(0.4 * MB), "0.4MB");
+  assert.equal(core.formatMediaSize(2.34 * MB), "2.3MB");
+  assert.equal(core.formatMediaSize(12.96 * MB), "13.0MB");
+});
+
+test("formatMediaSize: とても小さい・分からないとき", () => {
+  assert.equal(core.formatMediaSize(8), "1KB", "1KB 未満でも 0KB とは出さない");
+  assert.equal(core.formatMediaSize(0), "1KB");
+  assert.equal(core.formatMediaSize(undefined), "容量不明");
+  assert.equal(core.formatMediaSize(-1), "容量不明");
+});
+
+test("photoSizeText: 「1600×1200・0.4MB」の形", () => {
+  assert.equal(core.photoSizeText({ width: 1600, height: 1200, size: 0.4 * 1024 * 1024 }), "1600×1200・0.4MB");
+  assert.equal(core.photoSizeText({ width: 3000, height: 2000, size: 2.3 * 1024 * 1024 }), "3000×2000・2.3MB");
+});
+
+test("photoSizeText: 縮小できなかった写真（縦横が分からない）", () => {
+  assert.equal(core.photoSizeText({ width: null, height: null, size: 3.1 * 1024 * 1024 }), "大きさ不明・3.1MB");
+});
+
 test("newPhotoMeta: media ストアの1件の形（ラベルは未分類）", () => {
   const now = new Date(2026, 9, 21, 10, 25, 1);
   const m = core.newPhotoMeta({ id: "m1", visitId: "s_a", seq: 3, now, mimeType: "image/jpeg", ext: "jpg", size: 612345, width: 2048, height: 1536, exifStripped: true });
