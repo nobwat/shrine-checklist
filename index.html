@@ -701,8 +701,10 @@
           await navigator.share({ files: [file] });
           return true;
         } catch (e) {
-          if (e.name === "AbortError") return false; // 利用者が閉じた
-          logError("share", e);
+          if (e.name === "AbortError") return false; // 利用者が閉じた（エラーとして記録しない）
+          // Chrome（Android・Windows）は JSON ファイルの共有を受け付けず、canShare が true でも
+          // share が NotAllowedError（Permission denied）になる。想定内なので記録せずにダウンロードへ切り替える
+          if (e.name !== "NotAllowedError") logError("share", e);
         }
       }
     }
