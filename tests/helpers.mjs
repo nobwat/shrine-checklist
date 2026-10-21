@@ -18,7 +18,7 @@ function constLine(name) {
   return m[0];
 }
 
-const CONSTS = ["STORAGE_KEY", "BACKUP_PREFIX", "BACKUP_KEEP", "META_KEY"];
+const CONSTS = ["STORAGE_KEY", "BACKUP_PREFIX", "BACKUP_KEEP", "META_KEY", "SETTINGS_KEY"];
 const CORE = [...CONSTS.map(constLine), between("// ==== data-core:start ====", "// ==== data-core:end ====")].join("\n");
 const EXPORTS = [
   ...CONSTS, "stamp", "isoLocal", "isPlainObject", "entryProblem", "validateEntries", "readStored", "applyChanges", "commitChanges",
@@ -32,6 +32,7 @@ const EXPORTS = [
   "pickAudioMime", "audioExt", "formatDuration", "newAudioMeta", "planRecovery",
   "requestScreenWakeLock", "releaseScreenWakeLock",
   "MEMO_SAVE_DELAY_MS", "textByteSize", "newMemoMeta", "memoPreview",
+  "PHOTO_MAX_EDGE_CHOICES", "normalizeSettings", "readSettings", "writeSettings", "storageWarning",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする

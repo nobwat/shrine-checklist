@@ -256,6 +256,13 @@
     font-size: 0.76rem; padding: 0.6rem 0; border-bottom: 1px solid var(--border); text-align: left;
   }
   .backup-row:last-child { border-bottom: none; }
+  .settings-options { display: flex; flex-direction: column; gap: 0.4rem; }
+  .settings-options label {
+    display: flex; align-items: center; gap: 0.6rem; font-size: 0.9rem; padding: 0.7rem 0.8rem;
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+  }
+  .settings-options input { accent-color: var(--gold); width: 1.1rem; height: 1.1rem; }
+  .settings-options label:has(input:checked) { border-color: var(--gold); background: rgba(138,109,61,0.06); }
   .guide { font-size: 0.86rem; }
   .guide h2 { font-size: 0.95rem; font-weight: 500; color: var(--gold); margin: 1.8rem 0 0.6rem; }
   .guide ol, .guide ul { padding-left: 1.4rem; margin: 0.4rem 0; }
@@ -306,7 +313,7 @@
 
   @media print {
     .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
-    .load-error, .test-badge, #screen-diag, #screen-guide, #screen-field, .modal { display: none !important; }
+    .load-error, .test-badge, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -357,6 +364,7 @@
       <div>
         <button class="link-button" id="btn-export-download">ファイルとしてダウンロード</button>
         <button class="link-button" id="btn-open-guide">iPhoneでの保存について</button>
+        <button class="link-button" id="btn-open-settings">設定</button>
         <button class="link-button" id="btn-open-diag">診断</button>
       </div>
       <input type="file" id="import-file" accept=".json,application/json" class="hidden">
@@ -368,7 +376,9 @@
   <div id="screen-field" class="hidden">
     <div class="toolbar">
       <button class="back" id="btn-field-close">← 閉じる</button>
+      <button id="btn-field-settings">設定</button>
     </div>
+    <p class="field-warning hidden" id="field-storage-warning"></p>
     <p class="field-warning hidden" id="field-unavailable">
       この環境では現地モードを使えません（写真・録音・メモの保存先を開けないため。プライベートブラウズ中などに起こります）。<br>
       普通の記録は、一覧の「＋ 新しい神社を追加」から今までどおり付けられます。
@@ -430,6 +440,33 @@
       <input type="file" id="photo-camera" accept="image/*" capture="environment" class="hidden">
       <input type="file" id="photo-gallery" accept="image/*" multiple class="hidden">
     </div>
+  </div>
+
+  <!-- 設定画面 -->
+  <div id="screen-settings" class="hidden">
+    <div class="toolbar">
+      <button class="back" id="btn-settings-back">← 戻る</button>
+    </div>
+    <section>
+      <h2 class="section-title">写真の大きさ</h2>
+      <p class="section-note">大きいほど細かく写りますが、1枚の容量が増えます。どれでも、写真に入っている位置情報（EXIF）は消してから保存します。</p>
+      <div class="settings-options" id="settings-photo">
+        <label><input type="radio" name="photoMaxEdge" value="1600"> 小さめ（長辺1600px）</label>
+        <label><input type="radio" name="photoMaxEdge" value="2048"> 標準（長辺2048px）</label>
+        <label><input type="radio" name="photoMaxEdge" value="max"> 元サイズ（ただし最大約1,670万画素）</label>
+      </div>
+    </section>
+    <section>
+      <h2 class="section-title">録音の上限</h2>
+      <p class="section-note">この長さに達すると、自動で止めて保存します。長いほど1本の容量が増えます（1分あたり約0.5〜1MBの見込み）。</p>
+      <div class="settings-options" id="settings-audio">
+        <label><input type="radio" name="audioMaxSec" value="60"> 1分</label>
+        <label><input type="radio" name="audioMaxSec" value="180"> 3分</label>
+        <label><input type="radio" name="audioMaxSec" value="300"> 5分</label>
+        <label><input type="radio" name="audioMaxSec" value="600"> 10分</label>
+      </div>
+    </section>
+    <p class="save-hint" id="settings-hint"> </p>
   </div>
 
   <!-- 診断画面 -->
@@ -652,8 +689,9 @@
   const BACKUP_KEEP = 3;
   const META_KEY = "shrine-meta";
   const ERRORLOG_KEY = "shrine-errorlog";
+  const SETTINGS_KEY = "shrine-settings";
   const ERRORLOG_KEEP = 10;
-  const APP_VERSION = "2.0.0-dev.3";
+  const APP_VERSION = "2.0.0-dev.4";
   const IDB_NAME = "shrine-checklist"; // 写真・録音・メモ（計画書 3.3）
   const IDB_VERSION = 1;
   const IDB_OPEN_TIMEOUT_MS = 10000;   // 応答が無いまま止まるブラウザがあるため
@@ -1213,6 +1251,43 @@
   function memoPreview(text, max = 40) {
     const s = String(text || "").replace(/\s+/g, " ").trim();
     return [...s].length > max ? [...s].slice(0, max).join("") + "…" : s;
+  }
+
+  // ---------- 設定（shrine-settings。計画書 3.5） ----------
+  // STEP 4 で使うのは写真の大きさと録音の上限だけ。ほかの項目（STEP 5 で足す時間帯など）は、読み書きしても消さずに残す
+  const PHOTO_MAX_EDGE_CHOICES = [1600, 2048, "max"];
+  function normalizeSettings(raw) {
+    const s = isPlainObject(raw) ? raw : {};
+    return {
+      ...s,
+      photoMaxEdge: PHOTO_MAX_EDGE_CHOICES.includes(s.photoMaxEdge) ? s.photoMaxEdge : PHOTO_MAX_EDGE_DEFAULT,
+      audioMaxSec: AUDIO_MAX_SEC_CHOICES.includes(s.audioMaxSec) ? s.audioMaxSec : AUDIO_MAX_SEC_DEFAULT,
+    };
+  }
+  // 保存されている設定。無い・壊れている・知らない値のときは既定値で補う（設定が読めなくても現地モードは使える）
+  function readSettings() {
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null"); } catch (e) { /* 壊れていれば既定値 */ }
+    return normalizeSettings(raw);
+  }
+  // 設定を変える。選べない値なら例外にして、何も書かない。保存した設定を返す
+  function writeSettings(patch) {
+    if ("photoMaxEdge" in patch && !PHOTO_MAX_EDGE_CHOICES.includes(patch.photoMaxEdge)) throw new Error(`写真の大きさに ${patch.photoMaxEdge} は選べません`);
+    if ("audioMaxSec" in patch && !AUDIO_MAX_SEC_CHOICES.includes(patch.audioMaxSec)) throw new Error(`録音の上限に ${patch.audioMaxSec} 秒は選べません`);
+    const next = { ...readSettings(), ...patch };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    return next;
+  }
+
+  // ---------- 残り容量（計画書 6章） ----------
+  const STORAGE_WARN_BYTES = 200 * 1024 * 1024; // 残りがこれ未満なら警告
+  const STORAGE_WARN_RATIO = 0.1;               // または、上限のこの割合未満なら警告
+  // navigator.storage.estimate() の結果から、警告が要るか。要らない・分からないときは null
+  function storageWarning(usage, quota) {
+    if (!(quota > 0) || !(usage >= 0)) return null;
+    const remaining = Math.max(0, quota - usage);
+    if (remaining >= STORAGE_WARN_BYTES && remaining >= quota * STORAGE_WARN_RATIO) return null;
+    return { remaining, quota };
   }
 
   // 「この神社を削除」の確認文。media は summarizeMedia の結果、IndexedDB を読めなかったときは null
@@ -1787,10 +1862,17 @@
       if (navigator.storage && navigator.storage.estimate) {
         const est = await navigator.storage.estimate();
         L.push(`使用量 / 上限: ${formatBytes(est.usage || 0)} / ${formatBytes(est.quota || 0)}`);
+        const w = storageWarning(est.usage, est.quota);
+        L.push(`残り容量の警告: ${w ? `あり（残り約${formatBytes(w.remaining)}）` : "なし"}`);
       } else {
         L.push("使用量 / 上限: 未対応");
       }
     } catch (e) { L.push(`使用量 / 上限: 取得エラー（${e.message}）`); }
+
+    const st = readSettings();
+    L.push("", "■ 設定");
+    L.push(`写真の大きさ: ${st.photoMaxEdge === "max" ? "元サイズ（最大約1,670万画素）" : `長辺${st.photoMaxEdge}px`}`);
+    L.push(`録音の上限: ${formatDuration(st.audioMaxSec)}`);
 
     L.push("", "■ 録音形式（MediaRecorder）");
     if (typeof MediaRecorder === "undefined") {
@@ -2196,7 +2278,7 @@
   }
 
   // ---------- 画面切り替え ----------
-  const SCREEN_TITLES = { list: "神社訪問記録", detail: "神社記録", field: "現地モード", diag: "診断", guide: "iPhoneでの保存について" };
+  const SCREEN_TITLES = { list: "神社訪問記録", detail: "神社記録", field: "現地モード", settings: "設定", diag: "診断", guide: "iPhoneでの保存について" };
   function showScreen(name) {
     currentScreen = name;
     Object.keys(SCREEN_TITLES).forEach(s => document.getElementById(`screen-${s}`).classList.toggle("hidden", s !== name));
@@ -2246,6 +2328,9 @@
     }
     body.classList.remove("hidden");
     unavailable.classList.add("hidden");
+    // 写真・録音を残す前に、ブラウザの自動削除の対象から外すよう頼み、残り容量を確かめる
+    requestPersist();
+    checkStorageSpace();
     const draft = findResumableDraft(entries, new Date());
     if (draft) showFieldDraft(draft, true);
     else startNewDraft();
@@ -2456,7 +2541,7 @@
       photoQueue = photoQueue
         .then(async () => {
           setFieldStatus("写真を保存しています…");
-          await savePhoto(visitId, await preparePhoto(file, PHOTO_MAX_EDGE_DEFAULT));
+          await savePhoto(visitId, await preparePhoto(file, readSettings().photoMaxEdge));
         })
         .catch(e => { logError("photo", e); setFieldStatus(`写真を保存できませんでした（${e.message}）`, true); });
     }
@@ -2483,6 +2568,7 @@
     pendingPhoto = null;
     document.getElementById("field-retry").classList.add("hidden");
     touchDraft(visitId);
+    checkStorageSpace();
     if (visitId !== fieldId) return;
     const no = list.filter(m => m.type === "photo").length + 1;
     setFieldStatus(prepared.exifStripped ? `保存しました（写真${no}枚目）` : `保存しました（写真${no}枚目）。位置情報（EXIF）が残っています`, !prepared.exifStripped);
@@ -2534,7 +2620,7 @@
   let pendingAudio = null;      // 保存できなかった録音 { r, blob, durationSec, reason }
   let recInterruptedNotice = null; // 画面が隠れて止めた録音の知らせ（画面が戻ったときに出す）
   function currentAudioMaxSec() {
-    return AUDIO_MAX_SEC_DEFAULT; // 4-5 で設定から読む
+    return readSettings().audioMaxSec;
   }
   function showMicHelp(title, text, showSteps) {
     document.getElementById("mic-help-title").textContent = title;
@@ -2677,6 +2763,7 @@
     pendingAudio = null;
     document.getElementById("field-retry").classList.add("hidden");
     touchDraft(r.visitId);
+    checkStorageSpace();
     const no = list.filter(m => m.type === "audio").length + 1;
     const len = formatDuration(durationSec);
     if (reason === "hidden") {
@@ -2811,6 +2898,65 @@
     if (m.meta) setFieldStatus("メモを保存しました");
     if (m.visitId === fieldId) await renderFieldItems();
   }
+  // ブラウザによる自動削除の対象から外すよう要求する（起動時と現地モード開始時。結果は診断画面に出す）
+  function requestPersist() {
+    if (!navigator.storage || !navigator.storage.persist) {
+      persistResult = "未対応";
+      return;
+    }
+    navigator.storage.persist()
+      .then(r => { persistResult = r ? "許可" : "不許可"; })
+      .catch(e => { persistResult = "エラー"; logError("persist", e); });
+  }
+  // 残り容量が少なければ、現地モードの上に警告を出す。分からなければ何も出さない
+  async function checkStorageSpace() {
+    const el = document.getElementById("field-storage-warning");
+    try {
+      if (!navigator.storage || !navigator.storage.estimate) return;
+      const est = await navigator.storage.estimate();
+      const w = storageWarning(est.usage, est.quota);
+      el.classList.toggle("hidden", !w);
+      if (w) el.textContent = `空き容量が少なくなっています（残り約${formatBytes(w.remaining)}）。写真や録音を保存できなくなる前に、バックアップして古い写真を整理してください。`;
+    } catch (e) {
+      el.classList.add("hidden");
+    }
+  }
+
+  // ---------- 設定画面 ----------
+  let settingsReturn = "list"; // 「← 戻る」で戻る画面（list か field）
+  function showSettings(from) {
+    settingsReturn = from;
+    showScreen("settings");
+    const s = readSettings();
+    document.querySelectorAll("#settings-photo input").forEach(i => { i.checked = i.value === String(s.photoMaxEdge); });
+    document.querySelectorAll("#settings-audio input").forEach(i => { i.checked = Number(i.value) === s.audioMaxSec; });
+    document.getElementById("settings-hint").textContent = " ";
+  }
+  function onSettingChange(e) {
+    const t = e.target;
+    const hint = document.getElementById("settings-hint");
+    let patch;
+    if (t.name === "photoMaxEdge") patch = { photoMaxEdge: t.value === "max" ? "max" : Number(t.value) };
+    else if (t.name === "audioMaxSec") patch = { audioMaxSec: Number(t.value) };
+    else return;
+    try {
+      writeSettings(patch);
+      hint.textContent = "保存しました";
+    } catch (err) {
+      logError("settings", err);
+      showSettings(settingsReturn); // 保存されている値の表示に戻す
+      hint.textContent = `保存できませんでした（${err.message}）`;
+    }
+  }
+  function closeSettings() {
+    if (settingsReturn === "field" && fieldId && entries.some(e => e.id === fieldId)) {
+      showScreen("field");
+    } else {
+      fieldId = null; // 設定を見ている間に、別の画面で下書きが消された
+      showList();
+    }
+  }
+
   // 下書きが空なら消す（閉じるとき・新しく始めるとき）。メディアの件数が分からなければ消さない
   async function discardIfEmpty(id) {
     let count;
@@ -2895,6 +3041,10 @@
   document.getElementById("btn-rec-stop").addEventListener("click", () => stopRecording("user"));
   document.getElementById("btn-mic-help-close").addEventListener("click", hideMicHelp);
   document.getElementById("btn-field-memo").addEventListener("click", () => openMemoEditor(null));
+  document.getElementById("btn-open-settings").addEventListener("click", () => showSettings("list"));
+  document.getElementById("btn-field-settings").addEventListener("click", () => { flushPendingSave(); showSettings("field"); });
+  document.getElementById("btn-settings-back").addEventListener("click", closeSettings);
+  document.getElementById("screen-settings").addEventListener("change", onSettingChange);
   document.getElementById("memo-text").addEventListener("input", onMemoInput);
   document.getElementById("btn-memo-done").addEventListener("click", () => closeMemoEditor().catch(e => logError("memo", e)));
   // 「閉じる」を押す前にアプリを閉じても消えないよう、隠れるときに保存する
@@ -3070,14 +3220,7 @@
       await recoverRecordings().catch(e => logError("rec-recover", e));
       await cleanupStaleDrafts().catch(e => logError("draft-cleanup", e));
     }, () => {});
-    // ブラウザによる自動削除の対象から外すよう要求する
-    if (navigator.storage && navigator.storage.persist) {
-      navigator.storage.persist()
-        .then(r => { persistResult = r ? "許可" : "不許可"; })
-        .catch(e => { persistResult = "エラー"; logError("persist", e); });
-    } else {
-      persistResult = "未対応";
-    }
+    requestPersist();
   })();
 
   // ---------- PWA: service worker登録（https公開後に有効化されます） ----------
