@@ -73,4 +73,5 @@ STEP 0（2026-10-17）で挙げたリスク。方針の根拠：決定＝ユー�
 - 2026-10-18：Cloudflare Pages の設定（計画書2章）が完了（ユーザー作業）。main の公開先は `https://shrine-checklist.pages.dev`。feature ブランチを push するとブランチ別名の確認用 URL が自動で作られる。
 - 2026-10-21：STEP 2 完了。PR #1 を main にマージ済みで、本番（github.io）に反映済み。本番のスマホで全データ書き出しを実施（2件）、診断のエラーは0件。`feature/field-mode` に main を取り込み済み。
 - 2026-10-21：STEP 3（保存層と移行処理）を 3-1〜3-5 の5コミットで実装（差分保存・移行処理・IndexedDB 作成・削除とメディアの連動・バックアップからの復元と比較）。PC の Chrome で確認済み。自動テストは tests/（71項目、実行方法は tests/README.md）。バージョン 2.0.0-dev.3。
-- **次：STEP 3 のスマホ確認**（確認用 URL `https://feature-field-mode.shrine-checklist.pages.dev`、計画書 STEP 3 の確認 1〜6）。終わったら STEP 4（現地モード画面）に着手。
+- 2026-10-21：STEP 3 完了（スマホ確認OK。計画書 STEP 3 の確認 1〜6）。
+- **次：STEP 4（現地モード画面）**（`feature/field-mode` で着手）。確認は `https://feature-field-mode.shrine-checklist.pages.dev` で行う。
