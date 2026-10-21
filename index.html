@@ -462,6 +462,9 @@
   const ERRORLOG_KEY = "shrine-errorlog";
   const ERRORLOG_KEEP = 10;
   const APP_VERSION = "2.0.0-dev.3";
+  const IDB_NAME = "shrine-checklist"; // 写真・録音・メモ（計画書 3.3）
+  const IDB_VERSION = 1;
+  const IDB_OPEN_TIMEOUT_MS = 10000;   // 応答が無いまま止まるブラウザがあるため
   const IS_TEST = location.hostname.endsWith(".pages.dev"); // 確認用（Cloudflare Pages）
 
   // ---------- 状態 ----------
@@ -720,6 +723,19 @@
     log.push({ at: isoLocal(now), from: 1, to: 2, count: result.count, migrated: result.migrated, backupKey: result.backupKey });
     meta.migrations = log.slice(-MIGRATION_LOG_KEEP);
     localStorage.setItem(META_KEY, JSON.stringify(meta));
+  }
+
+  // ---------- メディアの集計 ----------
+  // media ストアのメタ情報を、種類ごとの件数と「どの記録にも属さない」件数にまとめる
+  function summarizeMedia(mediaList, entryIds) {
+    const ids = new Set(entryIds);
+    const byType = { photo: 0, audio: 0, memo: 0, other: 0 };
+    let orphans = 0;
+    for (const m of mediaList) {
+      byType[["photo", "audio", "memo"].includes(m.type) ? m.type : "other"]++;
+      if (!ids.has(m.visitId)) orphans++;
+    }
+    return { total: mediaList.length, byType, orphans };
   }
   // ==== data-core:end ====
 
@@ -1073,6 +1089,72 @@
   }
 
   // =========================================================
+  // IndexedDB（写真・録音・メモ。計画書 3.3）
+  // 開けない環境（プライベートブラウズなど）でも、文字の記録はこれまでどおり使える
+  // =========================================================
+  let idbPromise = null;
+  let idbError = null; // 最後に開けなかった理由（診断画面に出す）
+  function openMediaDB() {
+    if (idbPromise) return idbPromise;
+    idbPromise = new Promise((resolve, reject) => {
+      if (!window.indexedDB) { reject(new Error("このブラウザは IndexedDB に未対応です")); return; }
+      const timer = setTimeout(() => reject(new Error("IndexedDB を開く処理が応答しません")), IDB_OPEN_TIMEOUT_MS);
+      let req;
+      try {
+        req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      } catch (e) {
+        clearTimeout(timer);
+        reject(e);
+        return;
+      }
+      req.onupgradeneeded = (ev) => {
+        const db = req.result;
+        // 版を上げるときは、ここに oldVersion ごとの処理を足す（既存のストアは消さない）
+        if (ev.oldVersion < 1) {
+          const media = db.createObjectStore("media", { keyPath: "id" });
+          media.createIndex("visitId", "visitId");
+          media.createIndex("createdAt", "createdAt");
+          db.createObjectStore("blobs", { keyPath: "id" });
+          db.createObjectStore("recChunks", { keyPath: ["recId", "seq"] }).createIndex("recId", "recId");
+          db.createObjectStore("kv", { keyPath: "key" }).put({ key: "createdAt", value: isoLocal(new Date()), appVersion: APP_VERSION });
+        }
+      };
+      req.onsuccess = () => {
+        clearTimeout(timer);
+        const db = req.result;
+        // 別のタブで新しい版のアプリが DB の版を上げるときは、こちらを閉じて邪魔しない
+        db.onversionchange = () => { db.close(); idbPromise = null; };
+        idbError = null;
+        resolve(db);
+      };
+      req.onerror = () => { clearTimeout(timer); reject(req.error || new Error("IndexedDB を開けません")); };
+    }).catch(e => {
+      idbError = e;
+      idbPromise = null; // 次に使うときにもう一度試す
+      throw e;
+    });
+    return idbPromise;
+  }
+  function idbRequest(req) {
+    return new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  // 診断用：各ストアの件数、メディアの種類ごとの件数、どの記録にも属さないメディアの件数
+  async function readMediaStats(entryIds) {
+    const db = await openMediaDB();
+    const tx = db.transaction(["media", "blobs", "recChunks", "kv"], "readonly");
+    const [media, blobs, recChunks, created] = await Promise.all([
+      idbRequest(tx.objectStore("media").getAll()),
+      idbRequest(tx.objectStore("blobs").count()),
+      idbRequest(tx.objectStore("recChunks").count()),
+      idbRequest(tx.objectStore("kv").get("createdAt")),
+    ]);
+    return { version: db.version, createdAt: created && created.value, blobs, recChunks, ...summarizeMedia(media, entryIds) };
+  }
+
+  // =========================================================
   // 診断画面
   // =========================================================
   function isStandalone() {
@@ -1122,19 +1204,26 @@
     }
 
     L.push("", "■ IndexedDB");
-    // indexedDB.open は DB を作ってしまうので呼ばない。一覧だけ見る
+    try {
+      // 記録の id は保存内容から取る（読めなければ画面の記録）
+      const st = storageOK ? readStored() : { ok: false };
+      const ids = (st.ok ? st.list : entries).map(e => e.id);
+      const s = await readMediaStats(ids);
+      L.push(`${IDB_NAME}: version ${s.version}、作成 ${s.createdAt ? formatDateTime(s.createdAt) : "不明"}`);
+      L.push(`メディア: ${s.total}件（写真 ${s.byType.photo}・録音 ${s.byType.audio}・メモ ${s.byType.memo}${s.byType.other ? `・その他 ${s.byType.other}` : ""}）`);
+      L.push(`本体（blobs）: ${s.blobs}件、録音途中のチャンク: ${s.recChunks}件`);
+      L.push(`どの記録にも属さないメディア: ${s.orphans}件`);
+    } catch (e) {
+      L.push(`${IDB_NAME}: 使えません（${(idbError || e).message}）`);
+      L.push("文字の記録はこれまでどおり使えます");
+    }
     try {
       if (window.indexedDB && indexedDB.databases) {
-        const dbs = await indexedDB.databases();
-        const mine = dbs.find(d => d.name === "shrine-checklist");
-        L.push(`shrine-checklist: ${mine ? `作成済み（version ${mine.version}）` : "未作成"}`);
         // 同じドメインの他のアプリの名前は出さない（診断内容を貼る場所によっては公開されるため）
-        const others = dbs.filter(d => d.name !== "shrine-checklist").length;
+        const others = (await indexedDB.databases()).filter(d => d.name !== IDB_NAME).length;
         if (others) L.push(`その他のデータベース: ${others}件`);
-      } else {
-        L.push(window.indexedDB ? "一覧の取得に未対応のブラウザ" : "IndexedDB: 未対応");
       }
-    } catch (e) { L.push(`取得エラー（${e.message}）`); }
+    } catch (e) { /* 一覧が取れなくても診断は続ける */ }
 
     L.push("", "■ service worker");
     L.push(`制御中: ${navigator.serviceWorker && navigator.serviceWorker.controller ? "はい" : "いいえ"}`);
@@ -1557,6 +1646,8 @@
     if (storageOK) startupMigration();
     entries = storageOK ? loadEntries() : [];
     showList();
+    // 写真・録音用の DB を用意する。開けなくても文字の記録には影響しない（理由は診断画面に出す）
+    openMediaDB().catch(() => {});
     // ブラウザによる自動削除の対象から外すよう要求する
     if (navigator.storage && navigator.storage.persist) {
       navigator.storage.persist()
