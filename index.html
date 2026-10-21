@@ -173,6 +173,23 @@
     background: #c0392b; color: #fff; border: none; border-radius: 14px; cursor: pointer;
   }
   .rec-stop:active { opacity: 0.85; }
+  .memo-overlay {
+    position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column;
+    padding: 0.8rem 1rem calc(0.8rem + env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto;
+  }
+  .memo-title { font-size: 0.9rem; color: var(--gold); letter-spacing: 0.08em; margin: 0; }
+  .memo-hint { font-size: 0.72rem; color: var(--sub); margin: 0.2rem 0 0.6rem; }
+  /* 文字は20px以上（現地で読み書きしやすいように） */
+  .memo-text {
+    flex: 1; min-height: 6rem; width: 100%; resize: none; font-family: inherit; font-size: 22px; line-height: 1.6;
+    border: 1px solid var(--gold-line); border-radius: 8px; background: #fff; padding: 0.7rem; color: var(--ink);
+  }
+  .memo-status { font-size: 0.72rem; color: var(--sub); min-height: 1.2em; margin: 0.3rem 0; text-align: center; }
+  .memo-status.error { color: #b5413a; }
+  .memo-done {
+    width: 100%; min-height: 3.4rem; font-family: inherit; font-size: 1.05rem; letter-spacing: 0.1em;
+    background: var(--gold); color: #fff; border: none; border-radius: 10px; cursor: pointer;
+  }
   .field-item .play {
     flex: none; height: 2.6rem; padding: 0 0.9rem; border-radius: 999px; border: 1px solid var(--gold-line); background: #fff;
     color: var(--gold); font-family: inherit; font-size: 0.8rem; cursor: pointer;
@@ -391,7 +408,7 @@
         <button class="field-big photo" id="btn-field-photo">写真を撮る</button>
         <button class="field-gallery link-button" id="btn-field-gallery">ギャラリーから選ぶ</button>
         <button class="field-big" id="btn-field-audio">録音する</button>
-        <button class="field-big" id="btn-field-memo" disabled>メモ<small>（4-4 で使えるようになります）</small></button>
+        <button class="field-big" id="btn-field-memo">メモを書く</button>
       </div>
       <!-- 録音中：画面全体を赤い枠で囲み、大きな経過時間と停止ボタンだけを出す -->
       <div class="rec-overlay hidden" id="rec-overlay" role="dialog" aria-label="録音中">
@@ -400,6 +417,14 @@
         <p class="rec-limit" id="rec-limit"></p>
         <p class="rec-wake hidden" id="rec-wake">録音中は画面を消さないようにしています</p>
         <button class="rec-stop" id="btn-rec-stop">停止して保存</button>
+      </div>
+      <!-- 一言メモ：画面いっぱいの大きな入力欄。入力は自動で保存する -->
+      <div class="memo-overlay hidden" id="memo-overlay" role="dialog" aria-label="一言メモ">
+        <p class="memo-title" id="memo-title">一言メモ</p>
+        <p class="memo-hint">キーボードのマイクボタンで音声入力もできます。入力した内容は自動で保存されます。</p>
+        <textarea id="memo-text" class="memo-text" placeholder="ここに書く"></textarea>
+        <p class="memo-status" id="memo-status" aria-live="polite"></p>
+        <button class="memo-done" id="btn-memo-done">閉じる</button>
       </div>
       <!-- capture 付き：カメラが開く。capture なし：ギャラリー（カメラ中にブラウザが落ちたときの逃げ道） -->
       <input type="file" id="photo-camera" accept="image/*" capture="environment" class="hidden">
@@ -1173,6 +1198,23 @@
     return { recover, cleanup };
   }
 
+  // ---------- 一言メモ（計画書 6章） ----------
+  const MEMO_SAVE_DELAY_MS = 1000; // 入力が止まってから保存するまで
+  // 文字列のバイト数（UTF-8。zip に入れるときの大きさの目安）
+  function textByteSize(text) {
+    return new TextEncoder().encode(String(text || "")).length;
+  }
+  // メモのメタ情報（media ストアの1件）。本文は text に持ち、blobs には入れない
+  function newMemoMeta({ id, visitId, seq, now, text }) {
+    const at = isoLocal(now);
+    return { id, visitId, type: "memo", seq, createdAt: at, updatedAt: at, mimeType: "text/plain", ext: "txt", size: textByteSize(text), text };
+  }
+  // 一覧に出す冒頭の文：改行と続く空白を1つの空白にまとめ、長ければ「…」で切る
+  function memoPreview(text, max = 40) {
+    const s = String(text || "").replace(/\s+/g, " ").trim();
+    return [...s].length > max ? [...s].slice(0, max).join("") + "…" : s;
+  }
+
   // 「この神社を削除」の確認文。media は summarizeMedia の結果、IndexedDB を読めなかったときは null
   function deleteConfirmText(media) {
     if (!media) {
@@ -1637,6 +1679,13 @@
     const chunks = tx.objectStore("recChunks");
     const keys = chunks.index("recId").getAllKeys(id);
     keys.onsuccess = () => keys.result.forEach(k => chunks.delete(k));
+    return idbDone(tx);
+  }
+  // メタ情報だけを書く（メモは本文をメタ情報に持つので、これだけで保存できる）
+  async function putMediaMeta(meta) {
+    const db = await openMediaDB();
+    const tx = db.transaction("media", "readwrite");
+    tx.objectStore("media").put(meta);
     return idbDone(tx);
   }
   // 録音途中のチャンクを1つ書く（アプリが落ちたときの回収用）
@@ -2254,7 +2303,7 @@
       box.innerHTML = `<p class="field-items-empty">まだ写真・録音・メモはありません。<br>下のボタンから残せます。</p>`;
       return;
     }
-    let photoNo = 0, audioNo = 0;
+    let photoNo = 0, audioNo = 0, memoNo = 0;
     const rows = list.map(m => {
       const row = document.createElement("div");
       row.className = "field-item";
@@ -2291,8 +2340,12 @@
         play.addEventListener("click", () => playAudio(m.id, info, play).catch(e => logError("rec-play", e)));
         row.appendChild(info);
         row.appendChild(play);
+      } else if (m.type === "memo") {
+        title = `メモ${++memoNo}`;
+        info.innerHTML = `${escapeHTML(title)}<span class="sub">${escapeHTML(memoPreview(m.text) || "（空）")}</span><span class="sub">タップで書き直す</span>`;
+        info.addEventListener("click", () => openMemoEditor(m));
       } else {
-        title = m.type === "memo" ? "メモ" : "その他";
+        title = "その他";
         info.textContent = title;
       }
       if (!info.parentNode) row.appendChild(info);
@@ -2676,6 +2729,88 @@
     }
     if (recovered) alert(`前回、途中で終わった録音を${recovered}本回収しました。現地モードの一覧に「中断」として入っています。`);
   }
+
+  // ---------- 一言メモ ----------
+  // 開いているメモ。null なら閉じている
+  //   { visitId, meta（まだ作っていなければ null）, dirty, timer, queue, failed }
+  let memo = null;
+  function setMemoStatus(text, isError) {
+    const el = document.getElementById("memo-status");
+    el.textContent = text;
+    el.classList.toggle("error", !!isError);
+  }
+  // existing：一覧から開いたメモのメタ情報。新しく書くときは null
+  function openMemoEditor(existing) {
+    if (!fieldId || memo || rec) return;
+    hideLabelPanel();
+    flushPendingSave();
+    memo = { visitId: fieldId, meta: existing || null, dirty: false, timer: null, queue: Promise.resolve(), failed: false };
+    const ta = document.getElementById("memo-text");
+    ta.value = existing ? existing.text || "" : "";
+    document.getElementById("memo-title").textContent = existing ? "一言メモ（書き直し）" : "一言メモ";
+    setMemoStatus("");
+    document.getElementById("memo-overlay").classList.remove("hidden");
+    ta.focus();
+  }
+  function onMemoInput() {
+    if (!memo) return;
+    memo.dirty = true;
+    clearTimeout(memo.timer);
+    // 1文字目を入れた時点でメモを作る。それ以降は、入力が1秒止まったら保存する
+    if (!memo.meta && document.getElementById("memo-text").value.trim()) flushMemo();
+    else memo.timer = setTimeout(flushMemo, MEMO_SAVE_DELAY_MS);
+  }
+  // 入力中の内容をすぐ保存する。保存し終わったら解決する（失敗しても例外は出さず、memo.failed で伝える）
+  function flushMemo() {
+    const m = memo;
+    if (!m) return Promise.resolve();
+    clearTimeout(m.timer);
+    if (!m.dirty) return m.queue;
+    m.dirty = false;
+    const text = document.getElementById("memo-text").value;
+    m.queue = m.queue.then(async () => {
+      if (!m.meta) {
+        if (!text.trim()) return; // 空白だけなら、まだ作らない
+        const list = await listMediaOfVisit(m.visitId);
+        const meta = newMemoMeta({ id: newMediaId(), visitId: m.visitId, seq: nextMediaSeq(list), now: new Date(), text });
+        await putMediaMeta(meta);
+        m.meta = meta;
+        touchDraft(m.visitId);
+      } else {
+        const meta = { ...m.meta, text, size: textByteSize(text), updatedAt: isoLocal(new Date()) };
+        await putMediaMeta(meta);
+        m.meta = meta;
+      }
+      m.failed = false;
+      if (memo === m) setMemoStatus("保存しました");
+    }).catch(e => {
+      // 書けなかった内容は、次の入力か「閉じる」でもう一度保存する
+      logError("memo-save", e);
+      m.dirty = true;
+      m.failed = true;
+      if (memo === m) setMemoStatus(e && e.name === "QuotaExceededError"
+        ? "保存できませんでした。バックアップして古い写真を整理してください（入力した内容はこの画面に残っています）"
+        : `保存できませんでした（${e.message}）。入力した内容はこの画面に残っています`, true);
+    });
+    return m.queue;
+  }
+  async function closeMemoEditor() {
+    const m = memo;
+    if (!m) return;
+    await flushMemo();
+    if (m.failed) {
+      if (!confirm("メモを保存できていません。閉じると、保存できていない内容は消えます。閉じますか？")) return;
+    } else if (m.meta && !document.getElementById("memo-text").value.trim()) {
+      // 全部消して閉じたら、そのメモも消す
+      await deleteMediaItem(m.meta.id).catch(e => logError("memo-delete", e));
+      touchDraft(m.visitId);
+    }
+    memo = null;
+    document.getElementById("memo-overlay").classList.add("hidden");
+    document.getElementById("memo-text").blur();
+    if (m.meta) setFieldStatus("メモを保存しました");
+    if (m.visitId === fieldId) await renderFieldItems();
+  }
   // 下書きが空なら消す（閉じるとき・新しく始めるとき）。メディアの件数が分からなければ消さない
   async function discardIfEmpty(id) {
     let count;
@@ -2700,6 +2835,8 @@
   }
   async function closeFieldMode() {
     await stopRecording("close"); // 録音中なら止めて保存してから
+    if (memo) await closeMemoEditor();
+    if (memo) return; // 保存できていないメモを捨てずに残した
     if (!confirmLeavePending()) return;
     flushPendingSave();
     await photoQueue; // 処理中の写真を保存し終えてから、空かどうかを判断する
@@ -2712,6 +2849,8 @@
   }
   async function restartField() {
     await stopRecording("close");
+    if (memo) await closeMemoEditor();
+    if (memo) return;
     if (!confirmLeavePending()) return;
     flushPendingSave();
     await photoQueue;
@@ -2755,6 +2894,12 @@
   document.getElementById("btn-field-audio").addEventListener("click", () => startRecording().catch(e => logError("rec-start", e)));
   document.getElementById("btn-rec-stop").addEventListener("click", () => stopRecording("user"));
   document.getElementById("btn-mic-help-close").addEventListener("click", hideMicHelp);
+  document.getElementById("btn-field-memo").addEventListener("click", () => openMemoEditor(null));
+  document.getElementById("memo-text").addEventListener("input", onMemoInput);
+  document.getElementById("btn-memo-done").addEventListener("click", () => closeMemoEditor().catch(e => logError("memo", e)));
+  // 「閉じる」を押す前にアプリを閉じても消えないよう、隠れるときに保存する
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushMemo(); });
+  window.addEventListener("pagehide", () => flushMemo());
   // 画面がロックされた・別のアプリに切り替えたら、録音を止めて、それまでの分を保存する
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden" && rec) stopRecording("hidden");
