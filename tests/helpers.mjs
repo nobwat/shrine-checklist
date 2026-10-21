@@ -35,6 +35,8 @@ const EXPORTS = [
   "PHOTO_MAX_EDGE_CHOICES", "normalizeSettings", "readSettings", "writeSettings", "storageWarning",
   "TIMEBANDS_DEFAULT", "TIMEBAND_LABELS", "parseHHMM", "timebandsProblem", "timebandOf",
   "AUTO_FILL_KEYS", "planAutoFill", "isAutoValue",
+  "GEO_OPTIONS", "GEO_APP_TIMEOUT_MS", "GEO_COARSE_M", "geoErrorStatus", "locationFromPosition", "parseManualLocation",
+  "manualLocation", "hasCoords", "locationAfterFailure", "isCoarseLocation", "locationText",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする

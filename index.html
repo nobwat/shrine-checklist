@@ -132,7 +132,20 @@
   .field-name-row input {
     flex: 1; min-width: 0; border: none; background: transparent; font-family: inherit; font-size: 1.05rem; color: var(--ink); outline: none;
   }
-  .field-started { font-size: 0.72rem; color: var(--sub); margin: 0.4rem 0 1.2rem; }
+  .field-started { font-size: 0.72rem; color: var(--sub); margin: 0.4rem 0 0.2rem; }
+  .field-geo { margin: 0 0 1.2rem; }
+  .field-geo-text { font-size: 0.72rem; color: var(--sub); margin: 0; }
+  .field-geo-text.warn { color: #b5413a; }
+  .field-geo-actions { display: flex; gap: 0.2rem; margin-left: -0.5rem; }
+  .field-geo-manual { border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem; margin-top: 0.3rem; }
+  .field-geo-manual label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--sub); margin-bottom: 0.4rem; }
+  .field-geo-manual input {
+    flex: 1; min-width: 0; font-family: inherit; font-size: 1rem; border: none; border-bottom: 1px solid var(--gold-line);
+    background: transparent; color: var(--ink); padding: 0.2rem 0;
+  }
+  .field-geo-note { font-size: 0.68rem; color: var(--sub); margin: 0.2rem 0; }
+  .field-geo-error { font-size: 0.74rem; color: #b5413a; margin: 0.2rem 0; min-height: 1em; }
+  #geo-help { margin-top: 0.4rem; }
   .field-items-empty { font-size: 0.82rem; color: var(--sub); text-align: center; padding: 1.6rem 0.5rem; border: 1px dashed var(--border); border-radius: 6px; }
   /* 片手の親指で押せるよう、画面の下半分に大きなボタンを並べる */
   .field-actions {
@@ -404,6 +417,31 @@
         <input type="text" id="field-name" placeholder="あとで入力してもかまいません" autocomplete="off">
       </div>
       <p class="field-started" id="field-started"></p>
+      <div class="field-geo" id="field-geo">
+        <p class="field-geo-text" id="geo-text"></p>
+        <div class="field-geo-actions">
+          <button class="link-button" id="btn-geo-retry">もう一度取得</button>
+          <button class="link-button" id="btn-geo-manual">手で入力</button>
+        </div>
+        <div class="field-geo-manual hidden" id="geo-manual">
+          <label>緯度 <input type="text" id="geo-lat" inputmode="decimal" autocomplete="off" placeholder="35.68124"></label>
+          <label>経度 <input type="text" id="geo-lon" inputmode="decimal" autocomplete="off" placeholder="139.76712"></label>
+          <p class="field-geo-note">地図アプリでその場所を長押しすると出る数字を、そのまま貼れます（「35.68, 139.76」の形で緯度の欄に貼っても読みます）。</p>
+          <p class="field-geo-error" id="geo-manual-error"></p>
+          <button class="pill-button" id="btn-geo-manual-save">この位置にする</button>
+          <button class="link-button" id="btn-geo-manual-cancel">やめる</button>
+        </div>
+        <div class="field-warning hidden" id="geo-help">
+          位置情報の使用を許可すると、場所を記録できます（写真・録音・メモは、許可しなくても使えます）。
+          <ul class="mic-help-steps">
+            <li>Android の Chrome：アドレスバーの左のアイコン →「権限」→「位置情報」を許可</li>
+            <li>Android のホーム画面のアプリ：アイコンを長押し →「アプリ情報」→「権限」→「位置情報」を許可</li>
+            <li>端末の位置情報そのものがオフのとき：「設定」→「位置情報」をオン</li>
+            <li>iPhone：「設定」→「プライバシーとセキュリティ」→「位置情報サービス」→「Safari の Web サイト」→「使用中のみ」</li>
+          </ul>
+          許可したら「もう一度取得」を押してください。
+        </div>
+      </div>
       <p class="field-warning hidden" id="field-retry">
         <span id="field-retry-text"></span><br>
         <button class="pill-button" id="btn-retry">もう一度保存</button>
@@ -1324,6 +1362,68 @@
     return TIMEBAND_LABELS.night;
   }
 
+  // ---------- 位置（計画書 6章） ----------
+  // 端末の中の記録は丸めない（天候 API に送るときだけ丸める。5-3）
+  const GEO_OPTIONS = { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 };
+  const GEO_APP_TIMEOUT_MS = 20000; // 応答が無いまま止まる端末に備えて、アプリ側でも打ち切る
+  const GEO_COARSE_M = 100;         // 精度がこれより粗ければ「位置が粗い」と出す
+  // getCurrentPosition のエラーを状態に：1 → denied、3 → timeout、2 やそれ以外 → unavailable
+  function geoErrorStatus(err) {
+    const code = err && err.code;
+    if (code === 1) return "denied";
+    if (code === 3) return "timeout";
+    return "unavailable";
+  }
+  function locationFromPosition(pos, now) {
+    const c = pos.coords;
+    return {
+      lat: c.latitude, lon: c.longitude,
+      accuracyM: Number.isFinite(c.accuracy) ? Math.round(c.accuracy) : null,
+      status: "ok", fetchedAt: isoLocal(now),
+    };
+  }
+  // 手入力の緯度経度を読む。戻り値：{ lat, lon } または { error }
+  function parseManualLocation(latText, lonText) {
+    const num = (s) => {
+      const t = String(s || "").trim().replace(/[，、]/g, ",").replace(/[０-９．－]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+      return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
+    };
+    // 地図アプリからコピーした「35.68, 139.76」を緯度の欄に貼った場合も受け付ける
+    let a = latText, b = lonText;
+    if (String(b || "").trim() === "" && /[,，、]/.test(String(a || ""))) [a, b] = String(a).split(/[,，、]/);
+    const lat = num(a), lon = num(b);
+    if (Number.isNaN(lat) || Number.isNaN(lon)) return { error: "緯度と経度を数字で入れてください（例：35.68124 と 139.76712）" };
+    if (lat < -90 || lat > 90) return { error: "緯度は -90 から 90 の間です" };
+    if (lon < -180 || lon > 180) return { error: "経度は -180 から 180 の間です" };
+    return { lat, lon };
+  }
+  function manualLocation(lat, lon, now) {
+    return { lat, lon, accuracyM: null, status: "manual", fetchedAt: isoLocal(now) };
+  }
+  function hasCoords(loc) {
+    return !!loc && Number.isFinite(loc.lat) && Number.isFinite(loc.lon);
+  }
+  // 取得に失敗したときに記録する位置。前に取れた位置（ok・manual）があれば、それを残して状態だけを返さない（null）
+  function locationAfterFailure(prev, status, now) {
+    if (hasCoords(prev)) return null;
+    return { status, fetchedAt: isoLocal(now) };
+  }
+  function isCoarseLocation(loc) {
+    return !!loc && loc.status === "ok" && Number.isFinite(loc.accuracyM) && loc.accuracyM > GEO_COARSE_M;
+  }
+  // 現地モードに出す位置の文
+  function locationText(loc) {
+    if (!loc) return "位置：まだ取得していません";
+    const coords = hasCoords(loc) ? `${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)}` : "";
+    switch (loc.status) {
+      case "ok": return `位置：${coords}（精度${loc.accuracyM ?? "?"}m）${isCoarseLocation(loc) ? "　位置が粗いです" : ""}`;
+      case "manual": return `位置：${coords}（手入力）`;
+      case "denied": return "位置：使用が許可されていません";
+      case "timeout": return "位置：時間内に取得できませんでした";
+      default: return "位置：この端末・場所では取得できませんでした";
+    }
+  }
+
   // ---------- 自動で入れる値（計画書 3.2） ----------
   const AUTO_FILL_KEYS = ["v_date", "v_timeband", "v_weather"];
   function isBlankValue(v) {
@@ -1559,6 +1659,7 @@
         const name = document.getElementById("field-name");
         if (name.value !== (entry.name || "")) name.value = entry.name || "";
         renderFieldAuto(entry);
+        renderFieldGeo(entry, null);
       } else {
         fieldId = null;
         showList();
@@ -1978,6 +2079,13 @@
     L.push(`写真の大きさ: ${st.photoMaxEdge === "max" ? "元サイズ（最大約1,670万画素）" : `長辺${st.photoMaxEdge}px`}`);
     L.push(`録音の上限: ${formatDuration(st.audioMaxSec)}`);
     L.push(`時間帯の境界: ${TIMEBAND_KEYS.map(k => `${TIMEBAND_LABELS[k]} ${st.timebands[k]}`).join("・")}`);
+
+    L.push("", "■ 位置情報");
+    L.push(`API: ${navigator.geolocation ? "あり" : "なし"}`);
+    try {
+      const p = navigator.permissions && await navigator.permissions.query({ name: "geolocation" });
+      L.push(`許可の状態: ${p ? { granted: "許可", denied: "拒否", prompt: "未確認（使うときに聞かれる）" }[p.state] || p.state : "取得できません"}`);
+    } catch (e) { L.push("許可の状態: 取得できません"); }
 
     L.push("", "■ 録音形式（MediaRecorder）");
     if (typeof MediaRecorder === "undefined") {
@@ -2454,17 +2562,105 @@
     recordChange({ op: "add", entry });
     saveEntries();
     showFieldDraft(entry, false);
+    // 位置は新しく始めたときだけ取る（続きから再開したときは取り直さない。必要なら「もう一度取得」）
+    fetchLocation(entry.id).catch(e => logError("geo", e));
   }
   function showFieldDraft(entry, resumed) {
     fieldId = entry.id;
     document.getElementById("field-resume").classList.toggle("hidden", !resumed);
     document.getElementById("field-name").value = entry.name || "";
     renderFieldAuto(entry);
+    closeGeoManual();
+    renderFieldGeo(entry, null);
     hideLabelPanel();
     hideMicHelp();
     setFieldStatus("");
     renderFieldItems().catch(e => logError("field-items", e));
   }
+  // ---------- 位置 ----------
+  const geoInFlight = new Set(); // 位置を取得中の下書きの id
+  // 位置を1回取る。端末の時間切れ（15秒）に加えて、アプリ側でも20秒で打ち切る
+  function getPositionOnce() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation || typeof navigator.geolocation.getCurrentPosition !== "function") {
+        reject({ code: 2, message: "位置情報の API がありません" });
+        return;
+      }
+      const timer = setTimeout(() => reject({ code: 3, message: "アプリ側の時間切れ" }), GEO_APP_TIMEOUT_MS);
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => { clearTimeout(timer); resolve(pos); },
+          (err) => { clearTimeout(timer); reject(err); },
+          GEO_OPTIONS,
+        );
+      } catch (e) {
+        clearTimeout(timer);
+        reject(e);
+      }
+    });
+  }
+  // 下書きの位置を取って記録する（現地モードを始めたときと「もう一度取得」）。
+  // 取れなかったときは、前に取れた位置があればそのまま残す
+  async function fetchLocation(visitId) {
+    if (geoInFlight.has(visitId)) return;
+    geoInFlight.add(visitId);
+    if (visitId === fieldId) renderFieldGeo(entries.find(e => e.id === visitId), null);
+    let loc = null, failure = null;
+    try {
+      loc = locationFromPosition(await getPositionOnce(), new Date());
+    } catch (e) {
+      failure = geoErrorStatus(e); // 拒否・時間切れは利用者の環境なので、エラーログには残さない
+    } finally {
+      geoInFlight.delete(visitId);
+    }
+    const entry = entries.find(e => e.id === visitId);
+    if (!entry) return;
+    const next = loc || locationAfterFailure(entry.field && entry.field.location, failure, new Date());
+    if (next) {
+      editEntry(entry, "field", "location", next);
+      saveEntries();
+    }
+    if (visitId === fieldId) renderFieldGeo(entry, failure);
+  }
+  // 現地モードの位置の表示。failure：今回の取得に失敗したときの状態
+  function renderFieldGeo(entry, failure) {
+    const loc = entry && entry.field && entry.field.location;
+    const busy = !!entry && geoInFlight.has(entry.id);
+    const el = document.getElementById("geo-text");
+    let text = busy ? "位置：取得しています…" : locationText(loc);
+    if (!busy && failure && hasCoords(loc)) text += `（もう一度の取得はできませんでした。前の位置のままです）`;
+    el.textContent = text;
+    el.classList.toggle("warn", !busy && (isCoarseLocation(loc) || !!failure || (!!loc && !hasCoords(loc))));
+    document.getElementById("btn-geo-retry").disabled = busy;
+    const denied = !busy && (failure === "denied" || (!hasCoords(loc) && loc && loc.status === "denied"));
+    document.getElementById("geo-help").classList.toggle("hidden", !denied);
+  }
+  function openGeoManual() {
+    const entry = entries.find(e => e.id === fieldId);
+    if (!entry) return;
+    const loc = entry.field && entry.field.location;
+    document.getElementById("geo-lat").value = hasCoords(loc) ? String(loc.lat) : "";
+    document.getElementById("geo-lon").value = hasCoords(loc) ? String(loc.lon) : "";
+    document.getElementById("geo-manual-error").textContent = "";
+    document.getElementById("geo-manual").classList.remove("hidden");
+  }
+  function closeGeoManual() {
+    document.getElementById("geo-manual").classList.add("hidden");
+  }
+  function saveGeoManual() {
+    const entry = entries.find(e => e.id === fieldId);
+    if (!entry) return;
+    const r = parseManualLocation(document.getElementById("geo-lat").value, document.getElementById("geo-lon").value);
+    if (r.error) {
+      document.getElementById("geo-manual-error").textContent = r.error;
+      return;
+    }
+    editEntry(entry, "field", "location", manualLocation(r.lat, r.lon, new Date()));
+    saveEntries();
+    closeGeoManual();
+    renderFieldGeo(entry, null);
+  }
+
   // 現地モードの上に、参拝日時と時間帯を出す（時間帯は現地記録タブの値。手で直していればその値）
   function renderFieldAuto(entry) {
     const at = entry.field && (entry.field.visitAt || entry.field.startedAt);
@@ -3177,6 +3373,10 @@
   document.getElementById("btn-rec-stop").addEventListener("click", () => stopRecording("user"));
   document.getElementById("btn-mic-help-close").addEventListener("click", hideMicHelp);
   document.getElementById("btn-field-memo").addEventListener("click", () => openMemoEditor(null));
+  document.getElementById("btn-geo-retry").addEventListener("click", () => { if (fieldId) fetchLocation(fieldId).catch(e => logError("geo", e)); });
+  document.getElementById("btn-geo-manual").addEventListener("click", openGeoManual);
+  document.getElementById("btn-geo-manual-save").addEventListener("click", saveGeoManual);
+  document.getElementById("btn-geo-manual-cancel").addEventListener("click", closeGeoManual);
   document.getElementById("btn-open-settings").addEventListener("click", () => showSettings("list"));
   document.getElementById("btn-field-settings").addEventListener("click", () => { flushPendingSave(); showSettings("field"); });
   document.getElementById("btn-settings-back").addEventListener("click", closeSettings);
