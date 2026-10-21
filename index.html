@@ -165,7 +165,9 @@
   }
   .rec-label { color: #c0392b; font-size: 1rem; letter-spacing: 0.1em; margin: 0; }
   .rec-time { font-size: 4.4rem; line-height: 1.2; margin: 0.2rem 0; font-variant-numeric: tabular-nums; font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .rec-limit { font-size: 0.8rem; color: var(--sub); margin: 0 0 auto; }
+  .rec-limit { font-size: 0.8rem; color: var(--sub); margin: 0; }
+  .rec-wake { font-size: 0.72rem; color: var(--sub); margin: 0.2rem 0 0; }
+  .rec-overlay .rec-stop { margin-top: auto; }
   .rec-stop {
     width: 100%; max-width: 560px; min-height: 26vh; font-family: inherit; font-size: 1.5rem; letter-spacing: 0.1em;
     background: #c0392b; color: #fff; border: none; border-radius: 14px; cursor: pointer;
@@ -396,6 +398,7 @@
         <p class="rec-label">● 録音中</p>
         <p class="rec-time" id="rec-time">0:00</p>
         <p class="rec-limit" id="rec-limit"></p>
+        <p class="rec-wake hidden" id="rec-wake">録音中は画面を消さないようにしています</p>
         <button class="rec-stop" id="btn-rec-stop">停止して保存</button>
       </div>
       <!-- capture 付き：カメラが開く。capture なし：ギャラリー（カメラ中にブラウザが落ちたときの逃げ道） -->
@@ -1133,6 +1136,20 @@
       id, visitId, type: "audio", seq, createdAt: startedAt, updatedAt: isoLocal(now),
       mimeType, ext: audioExt(mimeType), size, durationSec, interrupted: !!interrupted,
     };
+  }
+  // 録音中だけ画面を消さないようにする（Wake Lock）。対応していない・断られたときは null を返し、例外は出さない
+  async function requestScreenWakeLock(nav) {
+    try {
+      if (!nav || !nav.wakeLock || typeof nav.wakeLock.request !== "function") return null;
+      return (await nav.wakeLock.request("screen")) || null;
+    } catch (e) {
+      return null; // 省電力モードなどで断られても、録音はそのまま続ける
+    }
+  }
+  async function releaseScreenWakeLock(sentinel) {
+    try {
+      if (sentinel && !sentinel.released && typeof sentinel.release === "function") await sentinel.release();
+    } catch (e) { /* 既に解放されていても気にしない */ }
   }
   // 録音途中のチャンク（recChunks の記録）を録音ごとにまとめ、回収するものを選ぶ。
   //   recover：まだ録音として保存されていないもの（seq の順に並べる）
@@ -2514,9 +2531,17 @@
     const r = {
       recId: newMediaId(), visitId: fieldId, recorder, stream, mimeType: recorder.mimeType || mime || "audio/webm",
       startedAt: isoLocal(now), t0: performance.now(), seq: 0, chunks: [], queue: Promise.resolve(),
-      maxSec: currentAudioMaxSec(), stopping: false, done: null, timer: null,
+      maxSec: currentAudioMaxSec(), stopping: false, done: null, timer: null, wakeLock: null,
     };
     rec = r;
+    // 録音中は画面を消さない（自動ロックで録音が止まらないように）。対応していない端末では何もしない
+    document.getElementById("rec-wake").classList.add("hidden");
+    requestScreenWakeLock(navigator).then(lock => {
+      if (!lock) return;
+      if (r.stopping) { releaseScreenWakeLock(lock); return; } // 取れる前に止めた
+      r.wakeLock = lock;
+      document.getElementById("rec-wake").classList.remove("hidden");
+    });
     recorder.ondataavailable = (ev) => {
       if (!ev.data || !ev.data.size) return;
       const seq = r.seq++;
@@ -2544,6 +2569,8 @@
     if (r.stopping) return r.done;
     r.stopping = true;
     clearInterval(r.timer);
+    releaseScreenWakeLock(r.wakeLock); // 画面を消さないのは録音中だけ
+    r.wakeLock = null;
     const durationSec = Math.min(r.maxSec, Math.round((performance.now() - r.t0) / 100) / 10);
     r.done = (async () => {
       // 最後のデータを受け取ってから止まる

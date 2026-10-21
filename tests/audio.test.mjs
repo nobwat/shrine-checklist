@@ -53,6 +53,39 @@ test("newAudioMeta: media ストアの1件の形。作成日時は録音を始�
   assert.equal(core.newAudioMeta({ id: "r2", now, interrupted: undefined }).interrupted, false);
 });
 
+// ---------- 画面を消さない（Wake Lock） ----------
+
+test("requestScreenWakeLock: 対応している端末では、screen の Wake Lock を取る", async () => {
+  const asked = [];
+  const sentinel = { released: false, release: async () => { sentinel.released = true; } };
+  const lock = await core.requestScreenWakeLock({ wakeLock: { request: async (type) => { asked.push(type); return sentinel; } } });
+  assert.equal(lock, sentinel);
+  assert.deepEqual(asked, ["screen"]);
+});
+
+test("requestScreenWakeLock: 対応していない端末では null（何もしない）", async () => {
+  assert.equal(await core.requestScreenWakeLock({}), null);
+  assert.equal(await core.requestScreenWakeLock({ wakeLock: {} }), null);
+  assert.equal(await core.requestScreenWakeLock(undefined), null);
+});
+
+test("requestScreenWakeLock: 断られても（省電力モードなど）例外を出さずに null", async () => {
+  const rejects = { wakeLock: { request: async () => { throw new DOMException("denied", "NotAllowedError"); } } };
+  const throwsNow = { wakeLock: { request: () => { throw new Error("sync"); } } };
+  assert.equal(await core.requestScreenWakeLock(rejects), null);
+  assert.equal(await core.requestScreenWakeLock(throwsNow), null);
+});
+
+test("releaseScreenWakeLock: 解放する。null・解放済み・解放で失敗しても例外を出さない", async () => {
+  let count = 0;
+  const s = { released: false, release: async () => { count++; s.released = true; } };
+  await core.releaseScreenWakeLock(s);
+  await core.releaseScreenWakeLock(s); // 2回目は何もしない
+  assert.equal(count, 1);
+  await core.releaseScreenWakeLock(null);
+  await core.releaseScreenWakeLock({ released: false, release: async () => { throw new Error("x"); } });
+});
+
 // ---------- 回収 ----------
 
 const NOW = 1_800_000_000_000;

@@ -30,6 +30,7 @@ const EXPORTS = [
   "nextMediaSeq", "extForFile", "newMediaId", "newPhotoMeta",
   "AUDIO_MIME_CANDIDATES", "AUDIO_MAX_SEC_DEFAULT", "AUDIO_MAX_SEC_CHOICES", "REC_RECOVER_IDLE_MS",
   "pickAudioMime", "audioExt", "formatDuration", "newAudioMeta", "planRecovery",
+  "requestScreenWakeLock", "releaseScreenWakeLock",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする
