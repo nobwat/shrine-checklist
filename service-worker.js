@@ -1,6 +1,7 @@
 // オンライン時は常にネットワークから最新を取得してキャッシュを更新し、
 // オフライン時（ネットワークエラー時）だけキャッシュを返す（ネットワーク優先）。
-const CACHE_NAME = "shrine-app-v3";
+const CACHE_PREFIX = "shrine-app-";
+const CACHE_NAME = CACHE_PREFIX + "v4";
 const ASSETS = [
   "./index.html",
   "./manifest.json",
@@ -36,10 +37,12 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
+// 同じドメイン（nobwat.github.io）の他リポジトリのキャッシュを消さないよう、
+// このアプリの名前（shrine-app-）で始まる古いキャッシュだけを消す。
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE_NAME).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
