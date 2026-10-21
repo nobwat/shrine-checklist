@@ -18,8 +18,12 @@ function constLine(name) {
   return m[0];
 }
 
-const CORE = [constLine("STORAGE_KEY"), between("// ==== data-core:start ====", "// ==== data-core:end ====")].join("\n");
-const EXPORTS = ["STORAGE_KEY", "isPlainObject", "entryProblem", "validateEntries", "readStored", "applyChanges", "commitChanges"];
+const CONSTS = ["STORAGE_KEY", "BACKUP_PREFIX", "BACKUP_KEEP", "META_KEY"];
+const CORE = [...CONSTS.map(constLine), between("// ==== data-core:start ====", "// ==== data-core:end ====")].join("\n");
+const EXPORTS = [
+  ...CONSTS, "stamp", "isoLocal", "isPlainObject", "entryProblem", "validateEntries", "readStored", "applyChanges", "commitChanges",
+  "readMeta", "listBackups", "makeBackup", "pruneBackups", "migrateEntries", "verifyMigration", "runMigration", "recordMigration",
+];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする
 export class FakeStorage {
@@ -60,4 +64,9 @@ export const OLD_RECORDS = {
   emptyName: { id: "s_test0003cccc", name: "", checks: {}, visit: {}, updatedAt: 1700000002000 },
   // 知らない項目がある
   extraField: { id: "s_test0004dddd", name: "テスト神社D", checks: {}, visit: {}, updatedAt: 1700000003000, memoFromFuture: { a: 1 } },
+};
+// 新しい版（schemaVersion 2）で作った形の架空の記録
+export const V2_RECORD = {
+  id: "s_test0005eeee", name: "テスト神社E", checks: {}, visit: {}, updatedAt: 1700000004000,
+  schemaVersion: 2, status: "final", createdAt: "2026-10-21T10:00:00+09:00",
 };

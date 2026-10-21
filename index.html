@@ -224,9 +224,9 @@
   </div>
 
   <div id="load-error" class="load-error hidden">
-    <strong>記録データを読み込めませんでした</strong>
-    データを守るため、保存を止めています（この状態で入力しても保存されません）。<br>
-    下のボタンで、今残っているデータをそのままファイルに書き出して保管してください。
+    <strong id="load-error-title">記録データを読み込めませんでした</strong>
+    <span id="load-error-text">データを守るため、保存を止めています（この状態で入力しても保存されません）。<br>
+    下のボタンで、今残っているデータをそのままファイルに書き出して保管してください。</span>
     <div><button class="pill-button" id="btn-export-raw">生データを書き出す</button></div>
   </div>
 
@@ -461,7 +461,7 @@
   const META_KEY = "shrine-meta";
   const ERRORLOG_KEY = "shrine-errorlog";
   const ERRORLOG_KEEP = 10;
-  const APP_VERSION = "1.1.0";
+  const APP_VERSION = "2.0.0-dev.3";
   const IS_TEST = location.hostname.endsWith(".pages.dev"); // 確認用（Cloudflare Pages）
 
   // ---------- 状態 ----------
@@ -470,6 +470,7 @@
   let storageOK = true;
   let currentTab = "visit"; // "visit" | "checklist"
   let loadFailure = null;   // 読み込みに失敗したとき { raw, error }。この間は保存しない
+  let migrationFailure = null; // 起動時の移行に失敗したとき（runMigration の結果）。記録は表示するが保存しない
   let persistResult = "未要求";
   let saveTimer = null;
   let pendingChanges = [];  // まだ保存していない変更（applyChanges の形式）
@@ -502,6 +503,7 @@
   });
   window.addEventListener("unhandledrejection", (e) => logError("unhandledrejection", e.reason));
 
+  // ==== data-core:start ====（画面に触れない処理。tests/ が取り出して試す）
   // ---------- 日時の書式 ----------
   function pad(n) { return String(n).padStart(2, "0"); }
   // withSec=false: 20261020-1030（ファイル名用） / true: 20261020T103000（バックアップキー用）
@@ -530,7 +532,6 @@
       return false;
     }
   }
-  // ==== data-core:start ====（画面に触れない処理。tests/ が取り出して試す）
   function isPlainObject(v) { return !!v && typeof v === "object" && !Array.isArray(v); }
   // 1件の記録の問題点。なければ null（画面が前提にしている型だけを確かめる）
   function entryProblem(e) {
@@ -540,6 +541,9 @@
     if (e.checks !== undefined && !isPlainObject(e.checks)) return "checks の形式が正しくありません";
     if (e.visit !== undefined && !isPlainObject(e.visit)) return "visit の形式が正しくありません";
     if (e.updatedAt !== undefined && typeof e.updatedAt !== "number") return "updatedAt が数値ではありません";
+    if (e.schemaVersion !== undefined && typeof e.schemaVersion !== "number") return "schemaVersion が数値ではありません";
+    if (e.status !== undefined && typeof e.status !== "string") return "status が文字列ではありません";
+    if (e.createdAt !== undefined && typeof e.createdAt !== "string") return "createdAt が文字列ではありません";
     return null;
   }
   // 記録の配列として正しい形か。問題があれば理由の文字列、なければ null
@@ -604,6 +608,119 @@
     localStorage.setItem(STORAGE_KEY, raw);
     return { ok: true, raw, list, othersChanged: stored.raw !== lastRaw };
   }
+
+  // ---------- メタ情報（shrine-meta） ----------
+  function readMeta() {
+    try { return JSON.parse(localStorage.getItem(META_KEY) || "{}") || {}; } catch (e) { return {}; }
+  }
+
+  // ---------- バックアップキー（読み込み・移行前の丸ごと複製。最新3件まで） ----------
+  function listBackups() {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(BACKUP_PREFIX)) keys.push(k);
+    }
+    return keys.sort().reverse(); // 新しい順
+  }
+  // 書いて読み戻し、一致しなければ例外にする（呼び出し側は元データに書かずに中止する）
+  function makeBackup(raw, now = new Date()) {
+    const base = BACKUP_PREFIX + stamp(now, true);
+    let key = base;
+    for (let n = 2; localStorage.getItem(key) !== null; n++) key = `${base}_${n}`;
+    localStorage.setItem(key, raw);
+    if (localStorage.getItem(key) !== raw) {
+      localStorage.removeItem(key);
+      throw new Error("バックアップの読み戻しが一致しません");
+    }
+    return key;
+  }
+  function pruneBackups() {
+    listBackups().slice(BACKUP_KEEP).forEach(k => localStorage.removeItem(k));
+  }
+
+  // ---------- 記録の移行（schemaVersion 1 → 2。計画書 4章） ----------
+  // 足すのは schemaVersion と status だけ。schemaVersion を持つ記録には触らない（何度実行しても同じ結果）
+  function migrateEntry(e) {
+    if (e.schemaVersion !== undefined) return e;
+    return { ...e, schemaVersion: 2, ...(e.status === undefined ? { status: "final" } : {}) };
+  }
+  function migrateEntries(list) {
+    return list.map(migrateEntry);
+  }
+  function sameValue(a, b) {
+    if (a === b) return true;
+    if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    const ka = Object.keys(a), kb = Object.keys(b);
+    return ka.length === kb.length && ka.every(k => Object.prototype.hasOwnProperty.call(b, k) && sameValue(a[k], b[k]));
+  }
+  const MIGRATION_ADDED = ["schemaVersion", "status"];
+  // 変換前後を比べ、追加しかしていないか確かめる。問題があれば理由の文字列、なければ null
+  function verifyMigration(before, after) {
+    if (!Array.isArray(after) || after.length !== before.length) return "件数が変わっています";
+    for (let i = 0; i < before.length; i++) {
+      const b = before[i], a = after[i];
+      if (!isPlainObject(a) || a.id !== b.id) return `${i + 1}件目の id が変わっています`;
+      for (const k of Object.keys(b)) {
+        if (!Object.prototype.hasOwnProperty.call(a, k) || !sameValue(a[k], b[k])) return `${i + 1}件目の ${k} が変わっています`;
+      }
+      for (const k of Object.keys(a)) {
+        if (!Object.prototype.hasOwnProperty.call(b, k) && !MIGRATION_ADDED.includes(k)) return `${i + 1}件目に想定外の項目 ${k} が増えています`;
+      }
+    }
+    return null;
+  }
+  // 起動時の移行（計画書 4.2）。変更が無ければ何も書かない。戻り値の status：
+  //   "none"（保存内容なし）/ "unchanged"（変更なし）/ "migrated"（移行した）
+  //   "failed"（stage: read | verify | backup | write。元データは変えていない）
+  function runMigration(now = new Date()) {
+    const stored = readStored();
+    if (!stored.ok) return { status: "failed", stage: "read", error: stored.error, raw: stored.raw };
+    if (!stored.raw) return { status: "none" };
+    const before = stored.list;
+    const after = migrateEntries(before);
+    let problem = verifyMigration(before, after);
+    if (problem) return { status: "failed", stage: "verify", error: problem, raw: stored.raw };
+    const migrated = after.filter((e, i) => e !== before[i]).length;
+    if (!migrated) return { status: "unchanged", count: before.length };
+
+    let backupKey;
+    try {
+      backupKey = makeBackup(stored.raw, now);
+    } catch (e) {
+      return { status: "failed", stage: "backup", error: e.message, raw: stored.raw };
+    }
+    const text = JSON.stringify(after);
+    try {
+      localStorage.setItem(STORAGE_KEY, text);
+      const check = readStored();
+      problem = !check.ok ? check.error
+        : check.raw !== text ? "書き込んだ内容と読み戻した内容が一致しません"
+        : verifyMigration(before, check.list);
+      if (problem) throw new Error(problem);
+    } catch (e) {
+      // 元の文字列で書き戻す。バックアップは消さずに残す
+      let restored = false;
+      try {
+        localStorage.setItem(STORAGE_KEY, stored.raw);
+        restored = localStorage.getItem(STORAGE_KEY) === stored.raw;
+      } catch (e2) { /* 書き戻せなかったことは restored で伝える */ }
+      return { status: "failed", stage: "write", error: e.message, raw: stored.raw, backupKey, restored };
+    }
+    let pruneError = null;
+    try { pruneBackups(); } catch (e) { pruneError = e.message; }
+    return { status: "migrated", count: before.length, migrated, backupKey, pruneError };
+  }
+  const MIGRATION_LOG_KEEP = 20;
+  // 移行の結果を shrine-meta.migrations に残す（直近20件）。書けなければ例外
+  function recordMigration(result, now = new Date()) {
+    const meta = readMeta();
+    const log = Array.isArray(meta.migrations) ? meta.migrations : [];
+    log.push({ at: isoLocal(now), from: 1, to: 2, count: result.count, migrated: result.migrated, backupKey: result.backupKey });
+    meta.migrations = log.slice(-MIGRATION_LOG_KEEP);
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+  }
   // ==== data-core:end ====
 
   // 画面用に、旧データ（visit・checks が無い）へ空の値を補う。保存内容には書かない
@@ -627,10 +744,39 @@
       stopSaving(result, "load");
       return [];
     }
-    loadFailure = null;
     lastRaw = result.raw;
+    if (migrationFailure) {
+      // 記録は読めるので表示する。保存は止めたまま（読み取り専用）
+      loadFailure = { raw: migrationFailure.raw, error: `移行に失敗（${migrationFailure.error}）` };
+      document.getElementById("load-error").classList.remove("hidden");
+      return withDefaults(result.list);
+    }
+    loadFailure = null;
     document.getElementById("load-error").classList.add("hidden");
     return withDefaults(result.list);
+  }
+  // 起動時に記録を新しい形（schemaVersion 2）に揃える。失敗したら元データは変えずに読み取り専用にする
+  function startupMigration() {
+    let r;
+    try {
+      r = runMigration(new Date());
+    } catch (e) {
+      r = { status: "failed", stage: "unexpected", error: e.message, raw: localStorage.getItem(STORAGE_KEY) };
+    }
+    if (r.status === "migrated") {
+      try { recordMigration(r, new Date()); } catch (e) { logError("migrate-log", e); }
+      if (r.pruneError) logError("prune", r.pruneError);
+    }
+    // 読めない（stage: read）場合は loadEntries がこれまでどおり扱う
+    if (r.status !== "failed" || r.stage === "read") return;
+    migrationFailure = r;
+    logError("migrate", `${r.stage}: ${r.error}`);
+    document.getElementById("load-error-title").textContent = "データの更新に失敗しました";
+    document.getElementById("load-error-text").textContent =
+      (r.stage === "write" && !r.restored
+        ? "元のデータは診断画面のバックアップ一覧に残っています。"
+        : "元のデータは変更していません。")
+      + "データを守るため、保存を止めています（この状態で入力しても保存されません）。下のボタンか診断画面から、全データを書き出して保管してください。";
   }
   // 保存する変更を足す。同じ項目への前の変更は、新しい値で置き換わるので捨てる
   function recordChange(c) {
@@ -731,40 +877,12 @@
   }
 
   // ---------- メタ情報（shrine-meta） ----------
-  function readMeta() {
-    try { return JSON.parse(localStorage.getItem(META_KEY) || "{}") || {}; } catch (e) { return {}; }
-  }
   function updateMeta(patch) {
     try {
       localStorage.setItem(META_KEY, JSON.stringify({ ...readMeta(), ...patch }));
     } catch (e) {
       logError("meta", e);
     }
-  }
-
-  // ---------- バックアップキー（読み込み前の丸ごと複製。最新3件まで） ----------
-  function listBackups() {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(BACKUP_PREFIX)) keys.push(k);
-    }
-    return keys.sort().reverse(); // 新しい順
-  }
-  // 書いて読み戻し、一致しなければ例外にする（呼び出し側は元データに書かずに中止する）
-  function makeBackup(raw) {
-    const base = BACKUP_PREFIX + stamp(new Date(), true);
-    let key = base;
-    for (let n = 2; localStorage.getItem(key) !== null; n++) key = `${base}_${n}`;
-    localStorage.setItem(key, raw);
-    if (localStorage.getItem(key) !== raw) {
-      localStorage.removeItem(key);
-      throw new Error("バックアップの読み戻しが一致しません");
-    }
-    return key;
-  }
-  function pruneBackups() {
-    listBackups().slice(BACKUP_KEEP).forEach(k => localStorage.removeItem(k));
   }
 
   // ---------- ファイルの受け渡し（share が使えれば share、だめならダウンロード） ----------
@@ -1032,7 +1150,11 @@
       L.push("使用不可");
     } else {
       L.push(`読み込み: ${loadFailure ? `失敗（${loadFailure.error}）` : "正常"}`);
-      L.push(`記録件数: ${loadFailure ? "不明" : entries.length}`);
+      L.push(`記録件数: ${loadFailure && !migrationFailure ? "不明" : entries.length}`);
+      if (!loadFailure || migrationFailure) {
+        const v2 = entries.filter(e => e.schemaVersion === 2).length;
+        L.push(`記録の形式: schemaVersion 2 が ${v2}件、それ以外 ${entries.length - v2}件`);
+      }
       let total = 0, otherCount = 0;
       const rows = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -1055,6 +1177,12 @@
       });
       const meta = readMeta();
       L.push(`最後の書き出し: ${meta.lastExportAt ? formatDateTime(meta.lastExportAt) : "なし"}`);
+
+      L.push("", "■ 移行ログ（直近）");
+      if (migrationFailure) L.push(`今回の起動: 失敗（${migrationFailure.stage}: ${migrationFailure.error}）`);
+      const log = Array.isArray(meta.migrations) ? meta.migrations : [];
+      if (!log.length) L.push("なし");
+      log.slice().reverse().forEach(m => L.push(`${formatDateTime(m.at)} v${m.from}→v${m.to}：${m.migrated}件（全${m.count}件）、バックアップキー作成 ${m.backupKey}`));
     }
 
     const errors = readErrorLog();
@@ -1316,7 +1444,11 @@
   // ---------- イベント ----------
   document.getElementById("btn-add").addEventListener("click", () => {
     if (loadFailure) { alert("記録データを読み込めなかったため、保存を止めています。新しい記録は追加できません。"); return; }
-    const entry = { id: "s_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: "", checks: {}, visit: {}, updatedAt: Date.now() };
+    const now = new Date();
+    const entry = {
+      id: "s_" + now.getTime().toString(36) + Math.random().toString(36).slice(2, 6), name: "", checks: {}, visit: {}, updatedAt: now.getTime(),
+      schemaVersion: 2, status: "final", createdAt: isoLocal(now),
+    };
     entries.push(entry);
     recordChange({ op: "add", entry });
     saveEntries();
@@ -1422,6 +1554,7 @@
     if (IS_TEST) document.querySelectorAll(".js-test-badge").forEach(b => b.classList.remove("hidden"));
     document.getElementById("panel-visit").innerHTML = buildVisitHTML();
     document.getElementById("panel-checklist").innerHTML = buildChecklistHTML();
+    if (storageOK) startupMigration();
     entries = storageOK ? loadEntries() : [];
     showList();
     // ブラウザによる自動削除の対象から外すよう要求する
