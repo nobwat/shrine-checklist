@@ -89,7 +89,7 @@ push は各ステップの終わりに、あなたの了承を得てから行う
 |---|---|---|---|
 | localStorage | `shrine-entries-offline` | 記録の配列（既存。外側は配列のまま） | 既存 |
 | localStorage | `shrine-entries-offline_backup_v1_20261020T103000` | 移行・読み込み前の丸ごと複製（最新3件まで） | STEP 2/3 |
-| localStorage | `shrine-settings` | 設定（写真サイズ、録音上限、時間帯境界、位置の丸め） | STEP 2 |
+| localStorage | `shrine-settings` | 設定（写真サイズ、録音上限、時間帯境界、位置の丸め） | STEP 3 以降 |
 | localStorage | `shrine-meta` | 最後のバックアップ日時、移行ログ | STEP 2 |
 | localStorage | `shrine-errorlog` | 直近のエラー10件 | STEP 2 |
 | IndexedDB | DB `shrine-checklist` | メディアのメタ情報・本体・録音途中チャンク | STEP 3 |

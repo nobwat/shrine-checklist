@@ -34,6 +34,7 @@
 | キャッシュ削除 | `shrine-app-` で始まるキャッシュだけを消す |
 | 天候 | Open-Meteo（キー不要）。「Weather data by Open-Meteo.com」を表示 |
 | PR の分担 | PR は Claude が作り、マージはユーザーが GitHub で行う |
+| 共有が断られたとき | Chrome は JSON や zip の Web Share を断ることがある（`canShare` が true でも `share` が NotAllowedError になる）。共有が断られたら、エラーとして記録せず、静かにダウンロードに切り替える（利用者が共有画面を閉じた AbortError も記録しない） |
 
 ## リスク一覧と方針
 
@@ -69,4 +70,5 @@ STEP 0（2026-10-17）で挙げたリスク。方針の根拠：決定＝ユー�
 - 2台運用の準備として `docs/step1-plan.md` と本ファイルを `feature/field-mode` にコミット。
 - 2026-10-17：STEP 1 確定。Q1〜Q5 の回答とブランチ手順の修正を `docs/step1-plan.md` に反映（確定版）。
 - 2026-10-18：Cloudflare Pages の設定（計画書2章）が完了（ユーザー作業）。main の公開先は `https://shrine-checklist.pages.dev`。feature ブランチを push するとブランチ別名の確認用 URL が自動で作られる。
-- **次：STEP 2**（main から `feature/safety-export` を作成して着手）。確認は `https://feature-safety-export.shrine-checklist.pages.dev` で行う。
+- 2026-10-21：STEP 2 完了。PR #1 を main にマージ済みで、本番（github.io）に反映済み。本番のスマホで全データ書き出しを実施（2件）、診断のエラーは0件。`feature/field-mode` に main を取り込み済み。
+- **次：STEP 3**（`feature/field-mode` で着手）。確認は `https://feature-field-mode.shrine-checklist.pages.dev` で行う。
