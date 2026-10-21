@@ -28,10 +28,12 @@ test("newDraftEntry: 下書きの形（status は draft、開始時刻と作成�
   assert.equal(validateEntries([e]), null, "今の判定を通る");
 });
 
-test("newEntryId: 続けて作っても重ならない", () => {
+test("newEntryId: 同じ時刻に続けて作っても重ならない", () => {
   const { newEntryId } = loadCore();
-  const ids = new Set(Array.from({ length: 200 }, () => newEntryId(NOW)));
-  assert.equal(ids.size, 200);
+  const ids = new Set(Array.from({ length: 20000 }, () => newEntryId(NOW)));
+  assert.equal(ids.size, 20000);
+  ids.forEach(id => assert.match(id, /^s_[0-9a-z]+$/));
+  assert.equal([...ids][0].length, `s_${NOW.getTime().toString(36)}`.length + 8, "時刻の後ろにランダムな8文字");
 });
 
 test("findResumableDraft: 6時間以内の下書きのうち、いちばん新しいものを選ぶ", () => {

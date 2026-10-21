@@ -157,6 +157,25 @@
     border: 1px solid var(--gold-line); background: #fff; color: var(--gold); cursor: pointer;
   }
   .label-buttons button.selected { background: var(--gold); color: #fff; }
+  .mic-help-steps { margin: 0.5rem 0; padding-left: 1.2rem; font-size: 0.76rem; }
+  .rec-overlay {
+    position: fixed; inset: 0; z-index: 60; background: rgba(250,249,246,0.97);
+    border: 10px solid #c0392b; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    padding: 1rem 1rem calc(1.2rem + env(safe-area-inset-bottom));
+  }
+  .rec-label { color: #c0392b; font-size: 1rem; letter-spacing: 0.1em; margin: 0; }
+  .rec-time { font-size: 4.4rem; line-height: 1.2; margin: 0.2rem 0; font-variant-numeric: tabular-nums; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .rec-limit { font-size: 0.8rem; color: var(--sub); margin: 0 0 auto; }
+  .rec-stop {
+    width: 100%; max-width: 560px; min-height: 26vh; font-family: inherit; font-size: 1.5rem; letter-spacing: 0.1em;
+    background: #c0392b; color: #fff; border: none; border-radius: 14px; cursor: pointer;
+  }
+  .rec-stop:active { opacity: 0.85; }
+  .field-item .play {
+    flex: none; height: 2.6rem; padding: 0 0.9rem; border-radius: 999px; border: 1px solid var(--gold-line); background: #fff;
+    color: var(--gold); font-family: inherit; font-size: 0.8rem; cursor: pointer;
+  }
+  .field-item audio { width: 100%; margin-top: 0.3rem; }
   /* 撮ったものの一覧 */
   .field-item { display: flex; align-items: center; gap: 0.7rem; padding: 0.5rem 0; border-bottom: 1px dotted var(--border); }
   .field-item img, .field-item .no-thumb {
@@ -345,11 +364,21 @@
         <input type="text" id="field-name" placeholder="あとで入力してもかまいません" autocomplete="off">
       </div>
       <p class="field-started" id="field-started"></p>
-      <p class="field-warning hidden" id="field-photo-retry">
-        <span id="field-photo-retry-text"></span><br>
-        <button class="pill-button" id="btn-photo-retry">もう一度保存</button>
-        <button class="link-button" id="btn-photo-retry-cancel">この写真を捨てる</button>
+      <p class="field-warning hidden" id="field-retry">
+        <span id="field-retry-text"></span><br>
+        <button class="pill-button" id="btn-retry">もう一度保存</button>
+        <button class="link-button" id="btn-retry-cancel">保存せずに捨てる</button>
       </p>
+      <div class="field-warning hidden" id="mic-help">
+        <strong id="mic-help-title">マイクを使えません</strong><br>
+        <span id="mic-help-text"></span>
+        <ul class="mic-help-steps" id="mic-help-steps">
+          <li>Android の Chrome：アドレスバーの左のアイコン →「権限」→「マイク」を許可</li>
+          <li>Android のホーム画面のアプリ：アイコンを長押し →「アプリ情報」→「権限」→「マイク」を許可</li>
+          <li>iPhone：「設定」→「アプリ」→「Safari」→「マイク」→「許可」</li>
+        </ul>
+        <button class="link-button" id="btn-mic-help-close">閉じる</button>
+      </div>
       <div id="field-items"></div>
       <div class="field-actions">
         <p class="field-status" id="field-status" aria-live="polite"></p>
@@ -359,8 +388,15 @@
         </div>
         <button class="field-big photo" id="btn-field-photo">写真を撮る</button>
         <button class="field-gallery link-button" id="btn-field-gallery">ギャラリーから選ぶ</button>
-        <button class="field-big" id="btn-field-audio" disabled>録音<small>（4-3 で使えるようになります）</small></button>
+        <button class="field-big" id="btn-field-audio">録音する</button>
         <button class="field-big" id="btn-field-memo" disabled>メモ<small>（4-4 で使えるようになります）</small></button>
+      </div>
+      <!-- 録音中：画面全体を赤い枠で囲み、大きな経過時間と停止ボタンだけを出す -->
+      <div class="rec-overlay hidden" id="rec-overlay" role="dialog" aria-label="録音中">
+        <p class="rec-label">● 録音中</p>
+        <p class="rec-time" id="rec-time">0:00</p>
+        <p class="rec-limit" id="rec-limit"></p>
+        <button class="rec-stop" id="btn-rec-stop">停止して保存</button>
       </div>
       <!-- capture 付き：カメラが開く。capture なし：ギャラリー（カメラ中にブラウザが落ちたときの逃げ道） -->
       <input type="file" id="photo-camera" accept="image/*" capture="environment" class="hidden">
@@ -968,8 +1004,11 @@
   }
   // ---------- 現地モードの下書き（計画書 リスク20） ----------
   const DRAFT_RESUME_MS = 6 * 60 * 60 * 1000; // この時間内に始めた下書きは、続きから再開する
+  // 記録の id。時刻＋ランダムな8文字（同じミリ秒に作っても重ならないよう、crypto の乱数を使う）
   function newEntryId(now) {
-    return "s_" + now.getTime().toString(36) + Math.random().toString(36).slice(2, 6);
+    const [a, b] = crypto.getRandomValues(new Uint32Array(2));
+    const rand = (a.toString(36) + b.toString(36)).padStart(8, "0").slice(-8);
+    return "s_" + now.getTime().toString(36) + rand;
   }
   function newDraftEntry(now) {
     const at = isoLocal(now);
@@ -1063,6 +1102,58 @@
   function newPhotoMeta({ id, visitId, seq, now, mimeType, ext, size, width, height, exifStripped }) {
     const at = isoLocal(now);
     return { id, visitId, type: "photo", seq, createdAt: at, updatedAt: at, mimeType, ext, size, width, height, label: null, exifStripped };
+  }
+
+  // ---------- 録音（計画書 6章） ----------
+  // 使える形式を、この順に探す。最後の "" は「形式を指定しない」（ブラウザに任せる）
+  const AUDIO_MIME_CANDIDATES = ["audio/webm;codecs=opus", "audio/mp4;codecs=mp4a.40.2", "audio/mp4", ""];
+  const AUDIO_MAX_SEC_DEFAULT = 180;
+  const AUDIO_MAX_SEC_CHOICES = [60, 180, 300, 600]; // 設定で選べる上限（1・3・5・10分）
+  const REC_RECOVER_IDLE_MS = 20000; // これより長く途中保存が止まっている録音だけを回収する（別の画面で録音中のものは触らない）
+  function pickAudioMime(isSupported) {
+    for (const t of AUDIO_MIME_CANDIDATES) {
+      if (t === "") return "";
+      try { if (isSupported(t)) return t; } catch (e) { /* 判定できない形式は使わない */ }
+    }
+    return "";
+  }
+  // 録音の拡張子（zip のファイル名用）。";codecs=…" は見ない
+  function audioExt(mimeType) {
+    const base = String(mimeType || "").split(";")[0].trim().toLowerCase();
+    return { "audio/webm": "webm", "audio/mp4": "m4a", "audio/aac": "aac", "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/wav": "wav" }[base] || "bin";
+  }
+  // 経過時間の表示（秒 → 0:42、10:05）
+  function formatDuration(sec) {
+    const s = Math.max(0, Math.floor(Number(sec) || 0));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+  // 録音のメタ情報（media ストアの1件）。interrupted：画面ロックなどで自動停止した・アプリが落ちて回収した
+  function newAudioMeta({ id, visitId, seq, startedAt, now, mimeType, size, durationSec, interrupted }) {
+    return {
+      id, visitId, type: "audio", seq, createdAt: startedAt, updatedAt: isoLocal(now),
+      mimeType, ext: audioExt(mimeType), size, durationSec, interrupted: !!interrupted,
+    };
+  }
+  // 録音途中のチャンク（recChunks の記録）を録音ごとにまとめ、回収するものを選ぶ。
+  //   recover：まだ録音として保存されていないもの（seq の順に並べる）
+  //   cleanup：録音は保存済みなのに、チャンクだけ残っているもの（消してよい）
+  // 最後のチャンクが idleMs より新しいものは、別の画面で録音中かもしれないので触らない
+  function planRecovery(chunks, savedMediaIds, nowMs, idleMs = REC_RECOVER_IDLE_MS) {
+    const groups = new Map();
+    for (const c of chunks) {
+      if (!groups.has(c.recId)) groups.set(c.recId, []);
+      groups.get(c.recId).push(c);
+    }
+    const recover = [], cleanup = [];
+    for (const [recId, list] of groups) {
+      const lastAt = Math.max(...list.map(c => Number(c.at) || 0));
+      if (nowMs - lastAt < idleMs) continue;
+      if (savedMediaIds.has(recId)) { cleanup.push(recId); continue; }
+      const sorted = list.slice().sort((a, b) => a.seq - b.seq);
+      const first = sorted[0];
+      recover.push({ recId, visitId: first.visitId, mimeType: first.mimeType, startedAt: first.startedAt, chunks: sorted, durationSec: sorted.length });
+    }
+    return { recover, cleanup };
   }
 
   // 「この神社を削除」の確認文。media は summarizeMedia の結果、IndexedDB を読めなかったときは null
@@ -1528,6 +1619,32 @@
     tx.objectStore("blobs").delete(id);
     const chunks = tx.objectStore("recChunks");
     const keys = chunks.index("recId").getAllKeys(id);
+    keys.onsuccess = () => keys.result.forEach(k => chunks.delete(k));
+    return idbDone(tx);
+  }
+  // 録音途中のチャンクを1つ書く（アプリが落ちたときの回収用）
+  async function saveRecChunk(chunk) {
+    const db = await openMediaDB();
+    const tx = db.transaction("recChunks", "readwrite");
+    tx.objectStore("recChunks").put(chunk);
+    return idbDone(tx);
+  }
+  // 録音を保存する：メタ情報・本体を書き、その録音のチャンクを消す（同じトランザクション）
+  async function saveRecording(meta, blob) {
+    const db = await openMediaDB();
+    const tx = db.transaction(["media", "blobs", "recChunks"], "readwrite");
+    tx.objectStore("media").put(meta);
+    tx.objectStore("blobs").put({ id: meta.id, blob });
+    const chunks = tx.objectStore("recChunks");
+    const keys = chunks.index("recId").getAllKeys(meta.id);
+    keys.onsuccess = () => keys.result.forEach(k => chunks.delete(k));
+    return idbDone(tx);
+  }
+  async function deleteRecChunks(recId) {
+    const db = await openMediaDB();
+    const tx = db.transaction("recChunks", "readwrite");
+    const chunks = tx.objectStore("recChunks");
+    const keys = chunks.index("recId").getAllKeys(recId);
     keys.onsuccess = () => keys.result.forEach(k => chunks.delete(k));
     return idbDone(tx);
   }
@@ -2080,6 +2197,7 @@
     document.getElementById("field-name").value = entry.name || "";
     document.getElementById("field-started").textContent = draftStartedAt(entry) === null ? "" : `開始 ${formatDateTime(entry.field.startedAt)}`;
     hideLabelPanel();
+    hideMicHelp();
     setFieldStatus("");
     renderFieldItems().catch(e => logError("field-items", e));
   }
@@ -2119,7 +2237,7 @@
       box.innerHTML = `<p class="field-items-empty">まだ写真・録音・メモはありません。<br>下のボタンから残せます。</p>`;
       return;
     }
-    let photoNo = 0;
+    let photoNo = 0, audioNo = 0;
     const rows = list.map(m => {
       const row = document.createElement("div");
       row.className = "field-item";
@@ -2146,11 +2264,21 @@
           + (m.exifStripped === false ? `<span class="exif">位置情報（EXIF）が残っています</span>` : "");
         info.addEventListener("click", () => showLabelPanel(m.id, m.label));
         pic.addEventListener("click", () => showLabelPanel(m.id, m.label));
+      } else if (m.type === "audio") {
+        title = `録音${++audioNo}`;
+        info.innerHTML = `${escapeHTML(title)}　${escapeHTML(formatDuration(m.durationSec))}`
+          + (m.interrupted ? `<span class="sub">中断（それまでの分を保存）</span>` : "");
+        const play = document.createElement("button");
+        play.className = "play";
+        play.textContent = "▶ 再生";
+        play.addEventListener("click", () => playAudio(m.id, info, play).catch(e => logError("rec-play", e)));
+        row.appendChild(info);
+        row.appendChild(play);
       } else {
-        title = m.type === "audio" ? "録音" : m.type === "memo" ? "メモ" : "その他";
+        title = m.type === "memo" ? "メモ" : "その他";
         info.textContent = title;
       }
-      row.appendChild(info);
+      if (!info.parentNode) row.appendChild(info);
       const remove = document.createElement("button");
       remove.className = "remove";
       remove.textContent = "×";
@@ -2160,6 +2288,23 @@
       return row;
     });
     rows.reverse().forEach(r => box.appendChild(r)); // 新しいものを上に
+  }
+  // 録音を再生する。押した行の下に再生の操作部品を出す
+  async function playAudio(id, info, button) {
+    const stored = await getMediaBlob(id);
+    if (!stored || !stored.blob) { setFieldStatus("録音のデータが見つかりません", true); return; }
+    const url = URL.createObjectURL(stored.blob);
+    fieldUrls.push(url);
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.src = url;
+    info.appendChild(audio);
+    button.remove();
+    try {
+      await audio.play();
+    } catch (e) {
+      // 自動で再生できない端末では、出した操作部品の ▶ を押してもらう
+    }
   }
   async function removeFieldItem(m, title) {
     if (!confirm(`${title}を削除します。元に戻せません。よろしいですか？`)) return;
@@ -2258,15 +2403,15 @@
     } catch (e) {
       logError("photo-save", e);
       pendingPhoto = { visitId, prepared };
-      document.getElementById("field-photo-retry-text").textContent = e && e.name === "QuotaExceededError"
+      document.getElementById("field-retry-text").textContent = e && e.name === "QuotaExceededError"
         ? "保存できませんでした。バックアップして古い写真を整理してください（撮った写真はこの画面に残っています）。"
         : `写真を保存できませんでした（${e.message}）。撮った写真はこの画面に残っています。`;
-      document.getElementById("field-photo-retry").classList.remove("hidden");
+      document.getElementById("field-retry").classList.remove("hidden");
       setFieldStatus("");
       return;
     }
     pendingPhoto = null;
-    document.getElementById("field-photo-retry").classList.add("hidden");
+    document.getElementById("field-retry").classList.add("hidden");
     touchDraft(visitId);
     if (visitId !== fieldId) return;
     const no = list.filter(m => m.type === "photo").length + 1;
@@ -2281,7 +2426,7 @@
   }
   function discardPendingPhoto() {
     pendingPhoto = null;
-    document.getElementById("field-photo-retry").classList.add("hidden");
+    document.getElementById("field-retry").classList.add("hidden");
   }
 
   // ---------- 撮影直後のラベル ----------
@@ -2311,6 +2456,199 @@
     setFieldStatus(`ラベル「${photoLabelName(key)}」を付けました`);
     await renderFieldItems();
   }
+
+  // ---------- 録音 ----------
+  // 録音中の状態。null なら録音していない
+  //   { recId, visitId, recorder, stream, mimeType, startedAt, t0, seq, chunks, queue, timer, maxSec, stopping, done }
+  let rec = null;
+  let pendingAudio = null;      // 保存できなかった録音 { r, blob, durationSec, reason }
+  let recInterruptedNotice = null; // 画面が隠れて止めた録音の知らせ（画面が戻ったときに出す）
+  function currentAudioMaxSec() {
+    return AUDIO_MAX_SEC_DEFAULT; // 4-5 で設定から読む
+  }
+  function showMicHelp(title, text, showSteps) {
+    document.getElementById("mic-help-title").textContent = title;
+    document.getElementById("mic-help-text").textContent = text;
+    document.getElementById("mic-help-steps").classList.toggle("hidden", !showSteps);
+    document.getElementById("mic-help").classList.remove("hidden");
+  }
+  function hideMicHelp() {
+    document.getElementById("mic-help").classList.add("hidden");
+  }
+  async function startRecording() {
+    if (rec || !fieldId) return;
+    hideMicHelp();
+    hideLabelPanel();
+    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showMicHelp("この端末・ブラウザでは録音できません", "写真とメモは使えます。", false);
+      return;
+    }
+    flushPendingSave();
+    let stream;
+    try {
+      // マイクだけを使う（カメラ映像は使わない）
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      if (e && (e.name === "NotAllowedError" || e.name === "SecurityError")) {
+        showMicHelp("マイクの使用が許可されていません", "録音するには、次の手順でマイクを許可してから、もう一度「録音する」を押してください。", true);
+      } else if (e && e.name === "NotFoundError") {
+        showMicHelp("マイクが見つかりません", "マイクのある端末で使ってください。", false);
+      } else {
+        logError("rec-start", e);
+        showMicHelp("マイクを使えません", `（${e && e.message}）`, true);
+      }
+      return;
+    }
+    const mime = pickAudioMime(t => MediaRecorder.isTypeSupported(t));
+    let recorder;
+    try {
+      recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recorder.start(1000); // 1秒ごとに途中のデータを受け取る
+    } catch (e) {
+      stream.getTracks().forEach(t => t.stop());
+      logError("rec-start", e);
+      showMicHelp("録音を始められませんでした", `（${e.message}）`, false);
+      return;
+    }
+    const now = new Date();
+    const r = {
+      recId: newMediaId(), visitId: fieldId, recorder, stream, mimeType: recorder.mimeType || mime || "audio/webm",
+      startedAt: isoLocal(now), t0: performance.now(), seq: 0, chunks: [], queue: Promise.resolve(),
+      maxSec: currentAudioMaxSec(), stopping: false, done: null, timer: null,
+    };
+    rec = r;
+    recorder.ondataavailable = (ev) => {
+      if (!ev.data || !ev.data.size) return;
+      const seq = r.seq++;
+      r.chunks.push(ev.data); // 保存はこのメモリ上のデータから行う。IndexedDB のチャンクは落ちたときの回収用
+      const chunk = { recId: r.recId, seq, blob: ev.data, visitId: r.visitId, mimeType: r.mimeType, startedAt: r.startedAt, at: Date.now() };
+      r.queue = r.queue.then(() => saveRecChunk(chunk)).catch(e => logError("rec-chunk", e));
+    };
+    recorder.onerror = (ev) => {
+      logError("rec", ev.error || "MediaRecorder のエラー");
+      stopRecording("error");
+    };
+    document.getElementById("rec-limit").textContent = `上限 ${formatDuration(r.maxSec)}（上限に達すると自動で保存します）`;
+    document.getElementById("rec-time").textContent = "0:00";
+    document.getElementById("rec-overlay").classList.remove("hidden");
+    r.timer = setInterval(() => {
+      const sec = (performance.now() - r.t0) / 1000;
+      document.getElementById("rec-time").textContent = formatDuration(sec);
+      if (sec >= r.maxSec) stopRecording("limit");
+    }, 250);
+  }
+  // 録音を止めて保存する。reason：user（停止ボタン）/ limit（上限）/ hidden（画面が隠れた）/ close（閉じる）/ error
+  function stopRecording(reason) {
+    const r = rec;
+    if (!r) return Promise.resolve();
+    if (r.stopping) return r.done;
+    r.stopping = true;
+    clearInterval(r.timer);
+    const durationSec = Math.min(r.maxSec, Math.round((performance.now() - r.t0) / 100) / 10);
+    r.done = (async () => {
+      // 最後のデータを受け取ってから止まる
+      await new Promise(resolve => {
+        r.recorder.onstop = resolve;
+        try {
+          if (r.recorder.state === "inactive") resolve();
+          else r.recorder.stop();
+        } catch (e) {
+          resolve();
+        }
+      });
+      r.stream.getTracks().forEach(t => t.stop()); // マイクを放す（マイク使用中の表示を消す）
+      await r.queue;
+      rec = null;
+      document.getElementById("rec-overlay").classList.add("hidden");
+      const blob = new Blob(r.chunks, { type: r.mimeType });
+      if (!blob.size) {
+        await deleteRecChunks(r.recId).catch(e => logError("rec-chunk", e));
+        setFieldStatus("録音できませんでした（音のデータがありません）", true);
+        return;
+      }
+      await saveAudio(r, blob, durationSec, reason);
+    })().catch(e => {
+      rec = null;
+      document.getElementById("rec-overlay").classList.add("hidden");
+      logError("rec-stop", e);
+      setFieldStatus(`録音を保存できませんでした（${e.message}）`, true);
+    });
+    return r.done;
+  }
+  async function saveAudio(r, blob, durationSec, reason) {
+    const list = await listMediaOfVisit(r.visitId);
+    const interrupted = reason === "hidden" || reason === "error";
+    const meta = newAudioMeta({
+      id: r.recId, visitId: r.visitId, seq: nextMediaSeq(list), startedAt: r.startedAt, now: new Date(),
+      mimeType: r.mimeType, size: blob.size, durationSec, interrupted,
+    });
+    try {
+      await saveRecording(meta, blob);
+    } catch (e) {
+      // 途中のチャンクは IndexedDB に残っているので、次に開いたときに回収できることもある
+      logError("rec-save", e);
+      pendingAudio = { r, blob, durationSec, reason };
+      document.getElementById("field-retry-text").textContent = e && e.name === "QuotaExceededError"
+        ? "録音を保存できませんでした。バックアップして古い写真を整理してください（録音はこの画面に残っています）。"
+        : `録音を保存できませんでした（${e.message}）。録音はこの画面に残っています。`;
+      document.getElementById("field-retry").classList.remove("hidden");
+      return;
+    }
+    pendingAudio = null;
+    document.getElementById("field-retry").classList.add("hidden");
+    touchDraft(r.visitId);
+    const no = list.filter(m => m.type === "audio").length + 1;
+    const len = formatDuration(durationSec);
+    if (reason === "hidden") {
+      recInterruptedNotice = `録音が中断されました。それまでの分（${len}）は保存しました（録音${no}本目）`;
+      setFieldStatus(recInterruptedNotice, true);
+    } else if (reason === "limit") {
+      setFieldStatus(`上限の${formatDuration(r.maxSec)}に達したので保存しました（録音${no}本目）`);
+    } else if (reason === "error") {
+      setFieldStatus(`録音が止まりました。それまでの分（${len}）は保存しました（録音${no}本目）`, true);
+    } else {
+      setFieldStatus(`保存しました（録音${no}本目、${len}）`);
+    }
+    if (r.visitId === fieldId) await renderFieldItems();
+  }
+  function retryPending() {
+    if (pendingPhoto) { retryPhoto(); return; }
+    if (!pendingAudio) return;
+    const { r, blob, durationSec, reason } = pendingAudio;
+    saveAudio(r, blob, durationSec, reason).catch(e => logError("rec-save", e));
+  }
+  function discardPending() {
+    if (pendingAudio) {
+      deleteRecChunks(pendingAudio.r.recId).catch(e => logError("rec-chunk", e));
+      pendingAudio = null;
+      document.getElementById("field-retry").classList.add("hidden");
+      return;
+    }
+    discardPendingPhoto();
+  }
+  // 起動時：アプリが落ちて途中で終わった録音を、チャンクをつないで「中断された録音」として保存する
+  async function recoverRecordings() {
+    const db = await openMediaDB();
+    const tx = db.transaction(["recChunks", "media"], "readonly");
+    const [chunks, mediaIds] = await Promise.all([
+      idbRequest(tx.objectStore("recChunks").getAll()),
+      idbRequest(tx.objectStore("media").getAllKeys()),
+    ]);
+    const plan = planRecovery(chunks, new Set(mediaIds), Date.now());
+    for (const recId of plan.cleanup) await deleteRecChunks(recId);
+    let recovered = 0;
+    for (const g of plan.recover) {
+      const blob = new Blob(g.chunks.map(c => c.blob), { type: g.mimeType });
+      const list = await listMediaOfVisit(g.visitId);
+      const meta = newAudioMeta({
+        id: g.recId, visitId: g.visitId, seq: nextMediaSeq(list), startedAt: g.startedAt, now: new Date(),
+        mimeType: g.mimeType, size: blob.size, durationSec: g.durationSec, interrupted: true,
+      });
+      await saveRecording(meta, blob);
+      recovered++;
+    }
+    if (recovered) alert(`前回、途中で終わった録音を${recovered}本回収しました。現地モードの一覧に「中断」として入っています。`);
+  }
   // 下書きが空なら消す（閉じるとき・新しく始めるとき）。メディアの件数が分からなければ消さない
   async function discardIfEmpty(id) {
     let count;
@@ -2325,15 +2663,17 @@
     recordChange({ op: "delete", id });
     saveEntries();
   }
-  // 保存できなかった写真があれば、捨ててよいか聞く。やめるなら false
-  function confirmLeavePendingPhoto() {
-    if (!pendingPhoto) return true;
-    if (!confirm("保存できていない写真があります。捨てて続けますか？")) return false;
-    discardPendingPhoto();
+  // 保存できなかった写真・録音があれば、捨ててよいか聞く。やめるなら false
+  function confirmLeavePending() {
+    if (!pendingPhoto && !pendingAudio) return true;
+    if (!confirm(`保存できていない${pendingAudio ? "録音" : "写真"}があります。捨てて続けますか？`)) return false;
+    discardPending();
+    if (pendingPhoto) discardPendingPhoto();
     return true;
   }
   async function closeFieldMode() {
-    if (!confirmLeavePendingPhoto()) return;
+    await stopRecording("close"); // 録音中なら止めて保存してから
+    if (!confirmLeavePending()) return;
     flushPendingSave();
     await photoQueue; // 処理中の写真を保存し終えてから、空かどうかを判断する
     const id = fieldId;
@@ -2344,7 +2684,8 @@
     showList();
   }
   async function restartField() {
-    if (!confirmLeavePendingPhoto()) return;
+    await stopRecording("close");
+    if (!confirmLeavePending()) return;
     flushPendingSave();
     await photoQueue;
     const id = fieldId;
@@ -2380,9 +2721,20 @@
     e.target.value = ""; // 同じファイルをもう一度選べるようにする
     if (files.length) handlePhotoFiles(files);
   }));
-  document.getElementById("btn-photo-retry").addEventListener("click", retryPhoto);
-  document.getElementById("btn-photo-retry-cancel").addEventListener("click", () => {
-    if (confirm("この写真を捨てます。よろしいですか？")) discardPendingPhoto();
+  document.getElementById("btn-retry").addEventListener("click", retryPending);
+  document.getElementById("btn-retry-cancel").addEventListener("click", () => {
+    if (confirm(`保存できていない${pendingAudio ? "録音" : "写真"}を捨てます。よろしいですか？`)) discardPending();
+  });
+  document.getElementById("btn-field-audio").addEventListener("click", () => startRecording().catch(e => logError("rec-start", e)));
+  document.getElementById("btn-rec-stop").addEventListener("click", () => stopRecording("user"));
+  document.getElementById("btn-mic-help-close").addEventListener("click", hideMicHelp);
+  // 画面がロックされた・別のアプリに切り替えたら、録音を止めて、それまでの分を保存する
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && rec) stopRecording("hidden");
+    if (document.visibilityState === "visible" && recInterruptedNotice) {
+      setFieldStatus(recInterruptedNotice, true);
+      recInterruptedNotice = null;
+    }
   });
   document.getElementById("field-name").addEventListener("input", (e) => {
     const entry = entries.find(x => x.id === fieldId);
@@ -2541,8 +2893,11 @@
     entries = storageOK ? loadEntries() : [];
     showList();
     // 写真・録音用の DB を用意する。開けなくても文字の記録には影響しない（理由は診断画面に出す）
-    // 開けたら、古い空の下書きを片付ける
-    openMediaDB().then(() => cleanupStaleDrafts().catch(e => logError("draft-cleanup", e)), () => {});
+    // 開けたら、途中で終わった録音を回収してから、古い空の下書きを片付ける（回収した録音のある下書きは消さない）
+    openMediaDB().then(async () => {
+      await recoverRecordings().catch(e => logError("rec-recover", e));
+      await cleanupStaleDrafts().catch(e => logError("draft-cleanup", e));
+    }, () => {});
     // ブラウザによる自動削除の対象から外すよう要求する
     if (navigator.storage && navigator.storage.persist) {
       navigator.storage.persist()

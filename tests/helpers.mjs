@@ -28,6 +28,8 @@ const EXPORTS = [
   "DRAFT_RESUME_MS", "newEntryId", "newDraftEntry", "findResumableDraft", "isEmptyDraft", "staleEmptyDraftIds",
   "PHOTO_LABELS", "photoLabelName", "PHOTO_MAX_EDGE_DEFAULT", "CANVAS_MAX_PIXELS", "THUMB_EDGE", "fitPhotoSize",
   "nextMediaSeq", "extForFile", "newMediaId", "newPhotoMeta",
+  "AUDIO_MIME_CANDIDATES", "AUDIO_MAX_SEC_DEFAULT", "AUDIO_MAX_SEC_CHOICES", "REC_RECOVER_IDLE_MS",
+  "pickAudioMime", "audioExt", "formatDuration", "newAudioMeta", "planRecovery",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする
