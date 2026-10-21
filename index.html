@@ -147,6 +147,14 @@
     font-size: 0.66rem; line-height: 1.6; background: #fff; border: 1px solid var(--border);
     border-radius: 6px; padding: 0.9rem; margin: 0;
   }
+  .diag-section { margin-top: 2rem; padding-top: 1.2rem; border-top: 1px solid var(--border); text-align: center; }
+  .diag-section .diag-output { text-align: left; margin-top: 0.8rem; }
+  .diag-note { font-size: 0.72rem; color: var(--sub); margin: 0 0 0.8rem; text-align: left; }
+  .backup-row {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem;
+    font-size: 0.76rem; padding: 0.6rem 0; border-bottom: 1px solid var(--border); text-align: left;
+  }
+  .backup-row:last-child { border-bottom: none; }
   .guide { font-size: 0.86rem; }
   .guide h2 { font-size: 0.95rem; font-weight: 500; color: var(--gold); margin: 1.8rem 0 0.6rem; }
   .guide ol, .guide ul { padding-left: 1.4rem; margin: 0.4rem 0; }
@@ -261,6 +269,20 @@
       <button id="btn-copy-diag">診断内容をコピー</button>
     </div>
     <pre class="diag-output" id="diag-output">読み込み中…</pre>
+
+    <div class="diag-section">
+      <p class="data-tools-title">バックアップから戻す</p>
+      <p class="diag-note">読み込み・移行・復元の直前の状態です（新しい3件まで）。戻すと、戻す前の記録も別のバックアップとして残ります。写真・録音・メモは変わりません。</p>
+      <div id="diag-backups"></div>
+    </div>
+
+    <div class="diag-section">
+      <p class="data-tools-title">書き出しJSONと比較</p>
+      <p class="diag-note">「全データ書き出し」のファイルを選ぶと、今の記録と比べます。書き出した後に編集・追加・削除した記録は、違いとして表示されます。</p>
+      <button class="pill-button" id="btn-compare">ファイルを選んで比較</button>
+      <input type="file" id="compare-file" accept=".json,application/json" class="hidden">
+      <pre class="diag-output hidden" id="diag-compare"></pre>
+    </div>
   </div>
 
   <!-- iPhone 向け案内画面 -->
@@ -629,8 +651,11 @@
     }
     return keys.sort().reverse(); // 新しい順
   }
-  // 書いて読み戻し、一致しなければ例外にする（呼び出し側は元データに書かずに中止する）
+  // 書いて読み戻し、一致しなければ例外にする（呼び出し側は元データに書かずに中止する）。
+  // 中身（文字列）が完全に同じバックアップが既にあれば、新しい日時のキーに移し替える
+  // （古い日時のまま残すと、直後の整理で消されて1件も残らないことがあるため）
   function makeBackup(raw, now = new Date()) {
+    const same = listBackups().filter(k => localStorage.getItem(k) === raw);
     const base = BACKUP_PREFIX + stamp(now, true);
     let key = base;
     for (let n = 2; localStorage.getItem(key) !== null; n++) key = `${base}_${n}`;
@@ -639,10 +664,73 @@
       localStorage.removeItem(key);
       throw new Error("バックアップの読み戻しが一致しません");
     }
+    // 新しいキーを書けたので、同じ中身の古いキーを消す（書けなかったときは触らない）
+    same.forEach(k => localStorage.removeItem(k));
     return key;
   }
   function pruneBackups() {
     listBackups().slice(BACKUP_KEEP).forEach(k => localStorage.removeItem(k));
+  }
+  // バックアップの時点に戻す（計画書 4.3）。戻す直前の内容も、別のバックアップとして先に残す。
+  // 戻り値：{ ok: true, count, preBackupKey } または { ok: false, error, restored }
+  //   restored：途中で失敗したとき、元の内容に戻せたか（false なら preBackupKey に残っている）
+  function restoreBackup(key, now = new Date()) {
+    const raw = key.startsWith(BACKUP_PREFIX) ? localStorage.getItem(key) : null;
+    if (raw === null) return { ok: false, error: "バックアップが見つかりません", restored: true };
+    let list;
+    try {
+      list = JSON.parse(raw);
+    } catch (e) {
+      return { ok: false, error: "バックアップを JSON として読めません", restored: true };
+    }
+    const problem = validateEntries(list);
+    if (problem) return { ok: false, error: `バックアップの形式が正しくありません（${problem}）`, restored: true };
+
+    const current = localStorage.getItem(STORAGE_KEY);
+    if (current === raw) return { ok: true, count: list.length, preBackupKey: null };
+    let preBackupKey = null;
+    if (current) {
+      try {
+        preBackupKey = makeBackup(current, now);
+      } catch (e) {
+        return { ok: false, error: `今の記録をバックアップできませんでした（${e.message}）`, restored: true };
+      }
+    }
+    try {
+      localStorage.setItem(STORAGE_KEY, raw);
+      if (localStorage.getItem(STORAGE_KEY) !== raw) throw new Error("書き込んだ内容と読み戻した内容が一致しません");
+    } catch (e) {
+      let restored = false;
+      try {
+        if (current === null) localStorage.removeItem(STORAGE_KEY);
+        else localStorage.setItem(STORAGE_KEY, current);
+        restored = localStorage.getItem(STORAGE_KEY) === current;
+      } catch (e2) { /* 戻せなかったことは restored で伝える */ }
+      return { ok: false, error: e.message, preBackupKey, restored };
+    }
+    return { ok: true, count: list.length, preBackupKey };
+  }
+
+  // ---------- 書き出しファイル ----------
+  // このアプリの書き出し形式、または記録の配列そのもの（生データ）を読む。
+  // 戻り値：{ ok: true, entries }（ファイル内で id が重なっていたら後のものを使う）または { ok: false, error }
+  function parseExportFile(text) {
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      return { ok: false, error: "JSON ファイルとして読めませんでした。" };
+    }
+    if (parsed && !Array.isArray(parsed) && parsed.format === "shrine-checklist-backup") {
+      const v = parsed.formatVersion;
+      if (!Number.isInteger(v) || v < 1) return { ok: false, error: "読み込めませんでした：ファイルの形式の版（formatVersion）が読めません。" };
+      if (v > 1) return { ok: false, error: "このファイルは新しいバージョンのアプリで書き出されています。アプリを最新にしてから読み込んでください。" };
+    }
+    const raw = Array.isArray(parsed) ? parsed
+      : (parsed && parsed.format === "shrine-checklist-backup" ? parsed.entries : null);
+    const problem = raw ? validateEntries(raw) : "このアプリの書き出しファイルではありません";
+    if (problem) return { ok: false, error: `読み込めませんでした：${problem}` };
+    return { ok: true, entries: [...new Map(raw.map(e => [e.id, e])).values()] };
   }
 
   // ---------- 記録の移行（schemaVersion 1 → 2。計画書 4章） ----------
@@ -726,6 +814,37 @@
     log.push({ at: isoLocal(now), from: 1, to: 2, count: result.count, migrated: result.migrated, backupKey: result.backupKey });
     meta.migrations = log.slice(-MIGRATION_LOG_KEEP);
     localStorage.setItem(META_KEY, JSON.stringify(meta));
+  }
+
+  // ---------- 書き出しJSONとの比較（計画書 4.4） ----------
+  // ファイルの記録（fileEntries）と今の記録（currentList）を id で突き合わせる。
+  //   missing：ファイルにあって今は無い id / extra：今だけにある id
+  //   changed：ファイルにある項目が、今は無い・値が違う記録 { id, name, fields }
+  //   added：今の記録にだけある項目名と、その件数
+  function compareWithExport(fileEntries, currentList) {
+    const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    const current = new Map(currentList.map(e => [e.id, e]));
+    const fileIds = new Set(fileEntries.map(e => e.id));
+    const missing = [], changed = [], added = {};
+    for (const f of fileEntries) {
+      const c = current.get(f.id);
+      if (!c) { missing.push(f.id); continue; }
+      const fields = Object.keys(f).filter(k => !has(c, k) || !sameValue(c[k], f[k]));
+      if (fields.length) changed.push({ id: f.id, name: c.name || f.name || "", fields });
+      for (const k of Object.keys(c)) if (!has(f, k)) added[k] = (added[k] || 0) + 1;
+    }
+    const extra = currentList.filter(e => !fileIds.has(e.id)).map(e => e.id);
+    const allSame = fileEntries.length === currentList.length && !missing.length && !extra.length && !changed.length;
+    return { fileCount: fileEntries.length, currentCount: currentList.length, missing, extra, changed, added, allSame };
+  }
+  // 比較結果の1行まとめ
+  function compareVerdict(r) {
+    if (!r.allSame) return "一致しません（下の内訳を見てください）";
+    const keys = Object.keys(r.added);
+    const tail = !keys.length ? "追加なし"
+      : keys.every(k => MIGRATION_ADDED.includes(k)) ? `追加は ${MIGRATION_ADDED.join("/")} のみ`
+      : `追加：${keys.join(", ")}`;
+    return `件数一致・元の項目は全部一致・${tail}`;
   }
 
   // ---------- メディアの集計 ----------
@@ -1017,25 +1136,9 @@
     if (loadFailure) { alert("今のデータを読み込めていないため、読み込みはできません。先に「生データを書き出す」で保管してください。"); return; }
     flushPendingSave();
 
-    let parsed;
-    try {
-      parsed = JSON.parse(await file.text());
-    } catch (e) {
-      alert("JSON ファイルとして読めませんでした。");
-      return;
-    }
-    if (parsed && !Array.isArray(parsed) && parsed.format === "shrine-checklist-backup") {
-      const v = parsed.formatVersion;
-      if (!Number.isInteger(v) || v < 1) { alert("読み込めませんでした：ファイルの形式の版（formatVersion）が読めません。"); return; }
-      if (v > 1) { alert("このファイルは新しいバージョンのアプリで書き出されています。アプリを最新にしてから読み込んでください。"); return; }
-    }
-    // このアプリの書き出し形式、または記録の配列そのもの（生データ）を受け付ける
-    const incomingRaw = Array.isArray(parsed) ? parsed
-      : (parsed && parsed.format === "shrine-checklist-backup" ? parsed.entries : null);
-    const problem = incomingRaw ? validateEntries(incomingRaw) : "このアプリの書き出しファイルではありません";
-    if (problem) { alert(`読み込めませんでした：${problem}`); return; }
-    // ファイル内で id が重なっていたら後のものを使う
-    const incoming = [...new Map(incomingRaw.map(e => [e.id, e])).values()];
+    const parsedFile = parseExportFile(await file.text());
+    if (!parsedFile.ok) { alert(parsedFile.error); return; }
+    const incoming = parsedFile.entries;
     if (incoming.length === 0) { alert("ファイルに記録が入っていません。"); return; }
 
     const stored = readStored();
@@ -1326,6 +1429,7 @@
   }
   async function showDiag() {
     showScreen("diag");
+    renderBackups();
     const out = document.getElementById("diag-output");
     out.textContent = "読み込み中…";
     try {
@@ -1334,6 +1438,99 @@
       logError("diag", e);
       out.textContent = "診断内容を作れませんでした：" + e.message;
     }
+  }
+
+  // ---------- バックアップから戻す・削除 ----------
+  // キー末尾の日時（20261021T103000、同じ秒なら _2 など）を読みやすくする
+  function backupLabel(key) {
+    const m = key.slice(BACKUP_PREFIX.length).match(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)(?:_(\d+))?$/);
+    return m ? `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}:${m[6]}${m[7] ? `（${m[7]}）` : ""}` : key;
+  }
+  function backupCount(key) {
+    try { return `${JSON.parse(localStorage.getItem(key)).length}件`; } catch (e) { return "件数不明"; }
+  }
+  function renderBackups() {
+    const box = document.getElementById("diag-backups");
+    box.innerHTML = "";
+    const keys = storageOK ? listBackups() : [];
+    if (!keys.length) {
+      box.innerHTML = `<p class="diag-note">バックアップはありません。</p>`;
+      return;
+    }
+    keys.forEach(key => {
+      const row = document.createElement("div");
+      row.className = "backup-row";
+      const label = document.createElement("span");
+      label.textContent = `${backupLabel(key)}（${backupCount(key)}）`;
+      const buttons = document.createElement("span");
+      const restore = document.createElement("button");
+      restore.className = "pill-button";
+      restore.textContent = "この時点に戻す";
+      restore.addEventListener("click", () => restoreFromBackup(key));
+      const del = document.createElement("button");
+      del.className = "link-button";
+      del.textContent = "削除";
+      del.addEventListener("click", () => deleteBackup(key));
+      buttons.append(restore, del);
+      row.append(label, buttons);
+      box.appendChild(row);
+    });
+  }
+  function restoreFromBackup(key) {
+    let now = "読めない状態";
+    try {
+      const r = readStored();
+      if (r.ok) now = `${r.list.length}件`;
+    } catch (e) { /* 件数が分からなくても戻せるようにする */ }
+    const text = `${backupLabel(key)} の状態（${backupCount(key)}）に戻します。\n`
+      + `今の記録（${now}）は、戻す前に別のバックアップとして残します。写真・録音・メモは変わりません。\n`
+      + "念のため、先に一覧画面の「全データ書き出し」をしておくことをおすすめします。\nよろしいですか？";
+    if (!confirm(text)) return;
+    // 保存待ちは戻す前の内容に入れ、戻した後には持ち込まない
+    flushPendingSave();
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    pendingChanges = [];
+    const r = restoreBackup(key, new Date());
+    if (!r.ok) {
+      logError("restore", r.error);
+      alert(`戻せませんでした：${r.error}\n` + (r.restored || !r.preBackupKey ? "今の記録は変更していません。" : `今の記録は、バックアップ ${backupLabel(r.preBackupKey)} に残っています。`));
+      renderBackups();
+      return;
+    }
+    try { pruneBackups(); } catch (e) { logError("prune", e); }
+    alert(`${r.count}件の記録を戻しました。画面を読み込み直します。`);
+    location.reload();
+  }
+  function deleteBackup(key) {
+    if (!confirm(`${backupLabel(key)} のバックアップ（${backupCount(key)}）を削除します。元に戻せません。よろしいですか？`)) return;
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      logError("delete-backup", e);
+    }
+    showDiag();
+  }
+
+  // ---------- 書き出しJSONと比較 ----------
+  async function compareFile(file) {
+    const out = document.getElementById("diag-compare");
+    out.classList.remove("hidden");
+    const parsed = parseExportFile(await file.text());
+    if (!parsed.ok) { out.textContent = parsed.error; return; }
+    const stored = storageOK ? readStored() : { ok: false, error: "このブラウザでは保存機能が使えません" };
+    if (!stored.ok) { out.textContent = `今の記録を読めないため比べられません（${stored.error}）`; return; }
+    const r = compareWithExport(parsed.entries, stored.list);
+    const name = (e) => `${e.name && e.name.trim() ? e.name : "（名称未設定）"}（${e.id}）`;
+    const fileById = new Map(parsed.entries.map(e => [e.id, e]));
+    const currentById = new Map(stored.list.map(e => [e.id, e]));
+    const L = [`■ ${file.name} との比較`, `結果: ${compareVerdict(r)}`, `件数: ファイル ${r.fileCount}件 / 今 ${r.currentCount}件`];
+    L.push(`ファイルにあって今は無い記録: ${r.missing.length}件`, ...r.missing.map(id => `  ${name(fileById.get(id))}`));
+    L.push(`今だけにある記録: ${r.extra.length}件`, ...r.extra.map(id => `  ${name(currentById.get(id))}`));
+    L.push(`元の項目が変わった記録: ${r.changed.length}件`, ...r.changed.map(c => `  ${name(c)}: ${c.fields.join(", ")}`));
+    const added = Object.entries(r.added).map(([k, n]) => `${k}（${n}件）`);
+    L.push(`追加された項目: ${added.length ? added.join("、") : "なし"}`);
+    out.textContent = L.join("\n");
   }
   async function copyText(text) {
     try {
@@ -1703,6 +1900,12 @@
   document.getElementById("btn-open-diag").addEventListener("click", showDiag);
   document.getElementById("btn-open-guide").addEventListener("click", showGuide);
   document.querySelectorAll(".js-back").forEach(b => b.addEventListener("click", showList));
+  document.getElementById("btn-compare").addEventListener("click", () => document.getElementById("compare-file").click());
+  document.getElementById("compare-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    e.target.value = ""; // 同じファイルをもう一度選べるようにする
+    if (file) compareFile(file).catch(err => { logError("compare", err); alert("比較できませんでした：" + err.message); });
+  });
   document.getElementById("btn-copy-diag").addEventListener("click", async (e) => {
     const ok = await copyText(document.getElementById("diag-output").textContent);
     e.target.textContent = ok ? "コピーしました" : "コピーできませんでした";

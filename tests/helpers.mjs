@@ -24,6 +24,7 @@ const EXPORTS = [
   ...CONSTS, "stamp", "isoLocal", "isPlainObject", "entryProblem", "validateEntries", "readStored", "applyChanges", "commitChanges",
   "readMeta", "listBackups", "makeBackup", "pruneBackups", "migrateEntries", "verifyMigration", "runMigration", "recordMigration",
   "summarizeMedia", "deleteConfirmText",
+  "restoreBackup", "parseExportFile", "compareWithExport", "compareVerdict",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする
