@@ -26,6 +26,8 @@ const EXPORTS = [
   "summarizeMedia", "deleteConfirmText",
   "restoreBackup", "parseExportFile", "compareWithExport", "compareVerdict",
   "DRAFT_RESUME_MS", "newEntryId", "newDraftEntry", "findResumableDraft", "isEmptyDraft", "staleEmptyDraftIds",
+  "PHOTO_LABELS", "photoLabelName", "PHOTO_MAX_EDGE_DEFAULT", "CANVAS_MAX_PIXELS", "THUMB_EDGE", "fitPhotoSize",
+  "nextMediaSeq", "extForFile", "newMediaId", "newPhotoMeta",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする
@@ -51,10 +53,10 @@ export class FakeStorage {
   removeItem(k) { this.map.delete(k); }
 }
 
-// storage を localStorage として使う data-core 一式を返す
-export function loadCore(storage = new FakeStorage()) {
-  const fn = new Function("localStorage", `${CORE}\nreturn { ${EXPORTS.join(", ")} };`);
-  return { ...fn(storage), storage };
+// storage を localStorage として使う data-core 一式を返す。crypto を差し替えることもできる
+export function loadCore(storage = new FakeStorage(), { crypto = globalThis.crypto } = {}) {
+  const fn = new Function("localStorage", "crypto", `${CORE}\nreturn { ${EXPORTS.join(", ")} };`);
+  return { ...fn(storage, crypto), storage };
 }
 
 // 過去の版が作っていた形の架空の記録（実データではない）

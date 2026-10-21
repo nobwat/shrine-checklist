@@ -117,7 +117,7 @@
   }
   .field-start-button:active { opacity: 0.85; }
   /* 下半分のボタンに隠れないよう、一覧の下に余白を取る */
-  #screen-field { padding-bottom: 48vh; }
+  #screen-field { padding-bottom: 62vh; }
   .field-banner {
     font-size: 0.8rem; background: rgba(138,109,61,0.08); border-radius: 6px;
     padding: 0.6rem 0.8rem; margin: 0 0 1rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
@@ -144,6 +144,32 @@
   .field-big:active { opacity: 0.8; }
   .field-big:disabled { border-color: var(--border); background: #f1efe9; color: #aaa; }
   .field-big small { display: block; font-size: 0.62rem; letter-spacing: 0.02em; }
+  .field-gallery { grid-column: 1 / -1; justify-self: center; margin: -0.4rem 0 -0.2rem; }
+  .field-status { grid-column: 1 / -1; margin: 0; min-height: 1.2em; text-align: center; font-size: 0.8rem; color: var(--gold); }
+  .field-status.error { color: #b5413a; }
+  .label-panel { grid-column: 1 / -1; }
+  /* ラベルを選んでいる間は、大きなボタンを少し低くして画面に収める */
+  .field-actions.labeling .field-big { min-height: 10vh; }
+  .label-panel-title { font-size: 0.72rem; color: var(--sub); margin: 0 0 0.4rem; text-align: center; }
+  .label-buttons { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; }
+  .label-buttons button {
+    font-family: inherit; font-size: 0.78rem; padding: 0.45rem 0.7rem; border-radius: 999px;
+    border: 1px solid var(--gold-line); background: #fff; color: var(--gold); cursor: pointer;
+  }
+  .label-buttons button.selected { background: var(--gold); color: #fff; }
+  /* 撮ったものの一覧 */
+  .field-item { display: flex; align-items: center; gap: 0.7rem; padding: 0.5rem 0; border-bottom: 1px dotted var(--border); }
+  .field-item img, .field-item .no-thumb {
+    width: 72px; height: 72px; object-fit: cover; border-radius: 6px; background: #eee; flex: none;
+  }
+  .field-item .no-thumb { display: flex; align-items: center; justify-content: center; font-size: 0.6rem; color: var(--sub); text-align: center; }
+  .field-item .info { flex: 1; min-width: 0; font-size: 0.8rem; }
+  .field-item .info .sub { display: block; font-size: 0.7rem; color: var(--sub); }
+  .field-item .info .exif { display: block; font-size: 0.7rem; color: #b5413a; }
+  .field-item .remove {
+    flex: none; width: 2.6rem; height: 2.6rem; border-radius: 50%; border: 1px solid #b5665a; background: #fff;
+    color: #b5665a; font-size: 1.1rem; cursor: pointer;
+  }
 
   .hidden { display: none !important; }
   .save-hint { text-align: center; font-size: 0.7rem; color: var(--sub); margin-top: -0.5rem; margin-bottom: 1.6rem; min-height: 1em; }
@@ -319,14 +345,26 @@
         <input type="text" id="field-name" placeholder="あとで入力してもかまいません" autocomplete="off">
       </div>
       <p class="field-started" id="field-started"></p>
-      <div id="field-items">
-        <p class="field-items-empty">まだ写真・録音・メモはありません。<br>下のボタンから残せます。</p>
-      </div>
+      <p class="field-warning hidden" id="field-photo-retry">
+        <span id="field-photo-retry-text"></span><br>
+        <button class="pill-button" id="btn-photo-retry">もう一度保存</button>
+        <button class="link-button" id="btn-photo-retry-cancel">この写真を捨てる</button>
+      </p>
+      <div id="field-items"></div>
       <div class="field-actions">
-        <button class="field-big photo" id="btn-field-photo" disabled>写真<small>（4-2 で使えるようになります）</small></button>
+        <p class="field-status" id="field-status" aria-live="polite"></p>
+        <div class="label-panel hidden" id="label-panel">
+          <p class="label-panel-title">この写真は？（押さなくても続けて撮れます）</p>
+          <div class="label-buttons" id="label-buttons"></div>
+        </div>
+        <button class="field-big photo" id="btn-field-photo">写真を撮る</button>
+        <button class="field-gallery link-button" id="btn-field-gallery">ギャラリーから選ぶ</button>
         <button class="field-big" id="btn-field-audio" disabled>録音<small>（4-3 で使えるようになります）</small></button>
         <button class="field-big" id="btn-field-memo" disabled>メモ<small>（4-4 で使えるようになります）</small></button>
       </div>
+      <!-- capture 付き：カメラが開く。capture なし：ギャラリー（カメラ中にブラウザが落ちたときの逃げ道） -->
+      <input type="file" id="photo-camera" accept="image/*" capture="environment" class="hidden">
+      <input type="file" id="photo-gallery" accept="image/*" multiple class="hidden">
     </div>
   </div>
 
@@ -967,6 +1005,66 @@
       .map(e => e.id);
   }
 
+  // ---------- 写真（計画書 3.4・6章） ----------
+  // ラベルはキーで保存する。表示名と、STEP 6 で自動チェックを付ける先はこの表から引く
+  const PHOTO_LABELS = [
+    { key: "signage", name: "案内板・由緒書き", check: "v_chk_signage" },
+    { key: "map", name: "境内図", check: "v_chk_map" },
+    { key: "torii", name: "鳥居", check: "v_spot_torii_chk" },
+    { key: "haiden", name: "拝殿・本殿", check: "v_spot_haiden_chk" },
+    { key: "komainu", name: "狛犬", check: "v_spot_komainu_chk" },
+    { key: "shinboku", name: "御神木・名木", check: "v_spot_shinboku_chk" },
+    { key: "toro", name: "灯籠・石碑・伝承の石", check: "v_spot_toro_chk" },
+    { key: "juyohin", name: "お守り・おみくじ", check: "v_chk_juyohin" },
+    { key: "other", name: "その他", check: "v_spot_other_chk" },
+    { key: "temizuya", name: "手水舎", check: null },
+    { key: "goshuin", name: "御朱印", check: null },
+  ];
+  function photoLabelName(key) {
+    const l = PHOTO_LABELS.find(x => x.key === key);
+    return l ? l.name : null;
+  }
+  const PHOTO_MAX_EDGE_DEFAULT = 2048;
+  const CANVAS_MAX_PIXELS = 16700000; // iPhone の canvas の面積の上限（約1,670万画素）
+  const THUMB_EDGE = 320;
+  // 縮小後の大きさ。長辺を maxEdge 以下（"max" なら長辺の制限なし）、かつ総画素数を上限以下にする。拡大はしない
+  function fitPhotoSize(width, height, maxEdge) {
+    let scale = 1;
+    if (typeof maxEdge === "number" && maxEdge > 0) scale = Math.min(scale, maxEdge / Math.max(width, height));
+    if (width * height * scale * scale > CANVAS_MAX_PIXELS) scale = Math.min(scale, Math.sqrt(CANVAS_MAX_PIXELS / (width * height)));
+    let w = Math.max(1, Math.floor(width * scale));
+    let h = Math.max(1, Math.floor(height * scale));
+    // 丸めで上限をわずかに超えないよう、念のため1px ずつ詰める
+    while (w * h > CANVAS_MAX_PIXELS) { w = Math.max(1, w - 1); h = Math.max(1, Math.floor(height * w / width)); }
+    return { width: w, height: h };
+  }
+  // その記録の次の連番（zip のファイル名用）。残っているものの最大の次なので、途中を消しても番号は詰め直さない
+  // （最後のものを消したときは、その番号をもう一度使う。消したものは zip に入らないので重ならない）
+  function nextMediaSeq(mediaList) {
+    return mediaList.reduce((max, m) => Math.max(max, Number.isInteger(m.seq) ? m.seq : 0), 0) + 1;
+  }
+  const MIME_EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic", "image/heif": "heif" };
+  // 元のまま保存するときの拡張子。種類（mime）で分からなければファイル名から取る
+  function extForFile(mimeType, fileName) {
+    if (MIME_EXT[mimeType]) return MIME_EXT[mimeType];
+    const m = /\.([0-9a-z]{1,5})$/i.exec(fileName || "");
+    return m ? m[1].toLowerCase() : "bin";
+  }
+  // メディアの id（UUID）。crypto.randomUUID が無い端末では getRandomValues で作る
+  function newMediaId() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  }
+  // 写真のメタ情報（media ストアの1件）
+  function newPhotoMeta({ id, visitId, seq, now, mimeType, ext, size, width, height, exifStripped }) {
+    const at = isoLocal(now);
+    return { id, visitId, type: "photo", seq, createdAt: at, updatedAt: at, mimeType, ext, size, width, height, label: null, exifStripped };
+  }
+
   // 「この神社を削除」の確認文。media は summarizeMedia の結果、IndexedDB を読めなかったときは null
   function deleteConfirmText(media) {
     if (!media) {
@@ -1387,6 +1485,51 @@
       idbRequest(tx.objectStore("kv").get("createdAt")),
     ]);
     return { version: db.version, createdAt: created && created.value, blobs, recChunks, ...summarizeMedia(media, entryIds) };
+  }
+  // 1つの記録のメディア（メタ情報）を連番の順に
+  async function listMediaOfVisit(visitId) {
+    const db = await openMediaDB();
+    const list = await idbRequest(db.transaction("media", "readonly").objectStore("media").index("visitId").getAll(visitId));
+    return list.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  }
+  async function getMediaBlob(id) {
+    const db = await openMediaDB();
+    return idbRequest(db.transaction("blobs", "readonly").objectStore("blobs").get(id));
+  }
+  // トランザクションが終わる（全部書けた）まで待つ
+  function idbDone(tx) {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB に書けませんでした"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB への書き込みが中断されました"));
+    });
+  }
+  // メタ情報と本体を同じトランザクションで書く（片方だけ残る状態を作らない）
+  async function saveMediaWithBlob(meta, blobRecord) {
+    const db = await openMediaDB();
+    const tx = db.transaction(["media", "blobs"], "readwrite");
+    tx.objectStore("media").put(meta);
+    tx.objectStore("blobs").put(blobRecord);
+    return idbDone(tx);
+  }
+  async function updateMediaMeta(id, patch) {
+    const db = await openMediaDB();
+    const tx = db.transaction("media", "readwrite");
+    const store = tx.objectStore("media");
+    const req = store.get(id);
+    req.onsuccess = () => { if (req.result) store.put({ ...req.result, ...patch, updatedAt: isoLocal(new Date()) }); };
+    return idbDone(tx);
+  }
+  // 1件のメディアを、メタ情報・本体・録音途中のチャンクまで同じトランザクションで消す
+  async function deleteMediaItem(id) {
+    const db = await openMediaDB();
+    const tx = db.transaction(["media", "blobs", "recChunks"], "readwrite");
+    tx.objectStore("media").delete(id);
+    tx.objectStore("blobs").delete(id);
+    const chunks = tx.objectStore("recChunks");
+    const keys = chunks.index("recId").getAllKeys(id);
+    keys.onsuccess = () => keys.result.forEach(k => chunks.delete(k));
+    return idbDone(tx);
   }
   // 記録ごとのメディアの件数（visitId → 件数）
   async function mediaCountsByVisit() {
@@ -1936,6 +2079,237 @@
     document.getElementById("field-resume").classList.toggle("hidden", !resumed);
     document.getElementById("field-name").value = entry.name || "";
     document.getElementById("field-started").textContent = draftStartedAt(entry) === null ? "" : `開始 ${formatDateTime(entry.field.startedAt)}`;
+    hideLabelPanel();
+    setFieldStatus("");
+    renderFieldItems().catch(e => logError("field-items", e));
+  }
+  function setFieldStatus(text, isError) {
+    const el = document.getElementById("field-status");
+    el.textContent = text;
+    el.classList.toggle("error", !!isError);
+  }
+  // 写真・録音・メモを足したり消したりしたら、下書きの更新日時も進める（一覧の並び順のため）
+  function touchDraft(visitId) {
+    const entry = entries.find(e => e.id === visitId);
+    if (!entry) return;
+    touchEntry(entry);
+    saveEntries();
+  }
+
+  // ---------- 撮ったものの一覧 ----------
+  let fieldUrls = []; // サムネイルの object URL（描き直すときに解放する）
+  function releaseFieldUrls() {
+    fieldUrls.forEach(u => URL.revokeObjectURL(u));
+    fieldUrls = [];
+  }
+  async function renderFieldItems() {
+    const visitId = fieldId;
+    const list = visitId ? await listMediaOfVisit(visitId) : [];
+    const thumbs = new Map();
+    for (const m of list) {
+      if (m.type !== "photo") continue;
+      const rec = await getMediaBlob(m.id);
+      if (rec && rec.thumb) thumbs.set(m.id, rec.thumb);
+    }
+    if (visitId !== fieldId) return; // 読んでいる間に別の下書きに切り替わった
+    releaseFieldUrls();
+    const box = document.getElementById("field-items");
+    box.innerHTML = "";
+    if (!list.length) {
+      box.innerHTML = `<p class="field-items-empty">まだ写真・録音・メモはありません。<br>下のボタンから残せます。</p>`;
+      return;
+    }
+    let photoNo = 0;
+    const rows = list.map(m => {
+      const row = document.createElement("div");
+      row.className = "field-item";
+      const info = document.createElement("div");
+      info.className = "info";
+      let title = "";
+      if (m.type === "photo") {
+        title = `写真${++photoNo}`;
+        const thumb = thumbs.get(m.id);
+        let pic;
+        if (thumb) {
+          pic = document.createElement("img");
+          const url = URL.createObjectURL(thumb);
+          fieldUrls.push(url);
+          pic.src = url;
+          pic.alt = title;
+        } else {
+          pic = document.createElement("div");
+          pic.className = "no-thumb";
+          pic.textContent = "サムネイルなし";
+        }
+        row.appendChild(pic);
+        info.innerHTML = `${escapeHTML(title)}<span class="sub">${escapeHTML(photoLabelName(m.label) || "ラベルなし（タップで選ぶ）")}</span>`
+          + (m.exifStripped === false ? `<span class="exif">位置情報（EXIF）が残っています</span>` : "");
+        info.addEventListener("click", () => showLabelPanel(m.id, m.label));
+        pic.addEventListener("click", () => showLabelPanel(m.id, m.label));
+      } else {
+        title = m.type === "audio" ? "録音" : m.type === "memo" ? "メモ" : "その他";
+        info.textContent = title;
+      }
+      row.appendChild(info);
+      const remove = document.createElement("button");
+      remove.className = "remove";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `${title}を削除`);
+      remove.addEventListener("click", () => removeFieldItem(m, title).catch(e => logError("media-delete", e)));
+      row.appendChild(remove);
+      return row;
+    });
+    rows.reverse().forEach(r => box.appendChild(r)); // 新しいものを上に
+  }
+  async function removeFieldItem(m, title) {
+    if (!confirm(`${title}を削除します。元に戻せません。よろしいですか？`)) return;
+    try {
+      await deleteMediaItem(m.id);
+    } catch (e) {
+      logError("media-delete", e);
+      alert(`削除できませんでした（${e.message}）`);
+      return;
+    }
+    if (labelTarget === m.id) hideLabelPanel();
+    touchDraft(m.visitId);
+    setFieldStatus(`${title}を削除しました`);
+    await renderFieldItems();
+  }
+
+  // ---------- 写真 ----------
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise(resolve => canvas.toBlob(resolve, type, quality));
+  }
+  // 画像を読み込む。createImageBitmap（写真の向きを反映）→ だめなら <img>。どちらも読めなければ null
+  async function decodeImage(file) {
+    if (window.createImageBitmap) {
+      try {
+        const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+        return { source: bmp, width: bmp.width, height: bmp.height, release: () => bmp.close() };
+      } catch (e) { /* 古い iPhone などは <img> で試す */ }
+    }
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      if (!img.naturalWidth) throw new Error("画像の大きさが読めません");
+      return { source: img, width: img.naturalWidth, height: img.naturalHeight, release: () => URL.revokeObjectURL(url) };
+    } catch (e) {
+      URL.revokeObjectURL(url);
+      return null;
+    }
+  }
+  async function drawToJpeg(source, width, height, quality) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(source, 0, 0, width, height);
+    const blob = await canvasToBlob(canvas, "image/jpeg", quality);
+    canvas.width = canvas.height = 0; // 大きな canvas のメモリをすぐ放す（iPhone 対策）
+    return blob;
+  }
+  // 保存する形に整える。縮小して JPEG にし直す（EXIF は消える）。できなければ元のファイルのまま（EXIF が残る）
+  async function preparePhoto(file, maxEdge) {
+    const img = await decodeImage(file);
+    if (img) {
+      try {
+        const size = fitPhotoSize(img.width, img.height, maxEdge);
+        const blob = await drawToJpeg(img.source, size.width, size.height, 0.8);
+        if (blob) {
+          const t = fitPhotoSize(img.width, img.height, THUMB_EDGE);
+          const thumb = await drawToJpeg(img.source, t.width, t.height, 0.7);
+          return { blob, thumb, mimeType: "image/jpeg", ext: "jpg", width: size.width, height: size.height, exifStripped: true };
+        }
+      } catch (e) {
+        logError("photo-resize", e);
+      } finally {
+        img.release();
+      }
+    }
+    return {
+      blob: file, thumb: null, mimeType: file.type || "application/octet-stream", ext: extForFile(file.type, file.name),
+      width: null, height: null, exifStripped: false,
+    };
+  }
+  let photoQueue = Promise.resolve(); // 写真は1枚ずつ順に処理する（メモリと連番のため）
+  let pendingPhoto = null;            // 保存できなかった写真 { visitId, prepared }（画面に残して再試行できるようにする）
+  function handlePhotoFiles(files) {
+    const visitId = fieldId;
+    if (!visitId) return photoQueue;
+    for (const file of files) {
+      photoQueue = photoQueue
+        .then(async () => {
+          setFieldStatus("写真を保存しています…");
+          await savePhoto(visitId, await preparePhoto(file, PHOTO_MAX_EDGE_DEFAULT));
+        })
+        .catch(e => { logError("photo", e); setFieldStatus(`写真を保存できませんでした（${e.message}）`, true); });
+    }
+    return photoQueue;
+  }
+  async function savePhoto(visitId, prepared) {
+    const list = await listMediaOfVisit(visitId);
+    const meta = newPhotoMeta({
+      id: newMediaId(), visitId, seq: nextMediaSeq(list), now: new Date(), mimeType: prepared.mimeType, ext: prepared.ext,
+      size: prepared.blob.size, width: prepared.width, height: prepared.height, exifStripped: prepared.exifStripped,
+    });
+    try {
+      await saveMediaWithBlob(meta, { id: meta.id, blob: prepared.blob, thumb: prepared.thumb });
+    } catch (e) {
+      logError("photo-save", e);
+      pendingPhoto = { visitId, prepared };
+      document.getElementById("field-photo-retry-text").textContent = e && e.name === "QuotaExceededError"
+        ? "保存できませんでした。バックアップして古い写真を整理してください（撮った写真はこの画面に残っています）。"
+        : `写真を保存できませんでした（${e.message}）。撮った写真はこの画面に残っています。`;
+      document.getElementById("field-photo-retry").classList.remove("hidden");
+      setFieldStatus("");
+      return;
+    }
+    pendingPhoto = null;
+    document.getElementById("field-photo-retry").classList.add("hidden");
+    touchDraft(visitId);
+    if (visitId !== fieldId) return;
+    const no = list.filter(m => m.type === "photo").length + 1;
+    setFieldStatus(prepared.exifStripped ? `保存しました（写真${no}枚目）` : `保存しました（写真${no}枚目）。位置情報（EXIF）が残っています`, !prepared.exifStripped);
+    await renderFieldItems();
+    showLabelPanel(meta.id, null);
+  }
+  function retryPhoto() {
+    if (!pendingPhoto) return;
+    const { visitId, prepared } = pendingPhoto;
+    photoQueue = photoQueue.then(() => savePhoto(visitId, prepared)).catch(e => logError("photo", e));
+  }
+  function discardPendingPhoto() {
+    pendingPhoto = null;
+    document.getElementById("field-photo-retry").classList.add("hidden");
+  }
+
+  // ---------- 撮影直後のラベル ----------
+  let labelTarget = null; // ラベルを付ける写真の id
+  function showLabelPanel(mediaId, current) {
+    labelTarget = mediaId;
+    const box = document.getElementById("label-buttons");
+    box.innerHTML = "";
+    PHOTO_LABELS.forEach(l => {
+      const b = document.createElement("button");
+      b.textContent = l.name;
+      b.classList.toggle("selected", l.key === current);
+      b.addEventListener("click", () => setPhotoLabel(mediaId, l.key).catch(e => logError("photo-label", e)));
+      box.appendChild(b);
+    });
+    document.getElementById("label-panel").classList.remove("hidden");
+    document.querySelector(".field-actions").classList.add("labeling");
+  }
+  function hideLabelPanel() {
+    labelTarget = null;
+    document.getElementById("label-panel").classList.add("hidden");
+    document.querySelector(".field-actions").classList.remove("labeling");
+  }
+  async function setPhotoLabel(mediaId, key) {
+    await updateMediaMeta(mediaId, { label: key });
+    if (labelTarget === mediaId) hideLabelPanel();
+    setFieldStatus(`ラベル「${photoLabelName(key)}」を付けました`);
+    await renderFieldItems();
   }
   // 下書きが空なら消す（閉じるとき・新しく始めるとき）。メディアの件数が分からなければ消さない
   async function discardIfEmpty(id) {
@@ -1951,15 +2325,28 @@
     recordChange({ op: "delete", id });
     saveEntries();
   }
+  // 保存できなかった写真があれば、捨ててよいか聞く。やめるなら false
+  function confirmLeavePendingPhoto() {
+    if (!pendingPhoto) return true;
+    if (!confirm("保存できていない写真があります。捨てて続けますか？")) return false;
+    discardPendingPhoto();
+    return true;
+  }
   async function closeFieldMode() {
+    if (!confirmLeavePendingPhoto()) return;
     flushPendingSave();
+    await photoQueue; // 処理中の写真を保存し終えてから、空かどうかを判断する
     const id = fieldId;
     fieldId = null;
+    hideLabelPanel();
+    releaseFieldUrls();
     if (id) await discardIfEmpty(id);
     showList();
   }
   async function restartField() {
+    if (!confirmLeavePendingPhoto()) return;
     flushPendingSave();
+    await photoQueue;
     const id = fieldId;
     if (id) await discardIfEmpty(id);
     startNewDraft();
@@ -1985,6 +2372,18 @@
   document.getElementById("btn-field-start").addEventListener("click", () => openFieldMode().catch(e => logError("field", e)));
   document.getElementById("btn-field-close").addEventListener("click", () => closeFieldMode().catch(e => { logError("field", e); showList(); }));
   document.getElementById("btn-field-new").addEventListener("click", () => restartField().catch(e => logError("field", e)));
+  // カメラ・ギャラリーを開く前に保存しておく（Android ではカメラ中にブラウザが終了されることがあるため）
+  document.getElementById("btn-field-photo").addEventListener("click", () => { flushPendingSave(); document.getElementById("photo-camera").click(); });
+  document.getElementById("btn-field-gallery").addEventListener("click", () => { flushPendingSave(); document.getElementById("photo-gallery").click(); });
+  ["photo-camera", "photo-gallery"].forEach(id => document.getElementById(id).addEventListener("change", (e) => {
+    const files = [...e.target.files];
+    e.target.value = ""; // 同じファイルをもう一度選べるようにする
+    if (files.length) handlePhotoFiles(files);
+  }));
+  document.getElementById("btn-photo-retry").addEventListener("click", retryPhoto);
+  document.getElementById("btn-photo-retry-cancel").addEventListener("click", () => {
+    if (confirm("この写真を捨てます。よろしいですか？")) discardPendingPhoto();
+  });
   document.getElementById("field-name").addEventListener("input", (e) => {
     const entry = entries.find(x => x.id === fieldId);
     if (!entry) return;
