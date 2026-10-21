@@ -32,6 +32,33 @@ test("summarizeMedia: 知らない種類は「その他」に数える", () => {
   assert.equal(r.orphans, 0);
 });
 
+// ---------- 3-4 削除の確認文 ----------
+
+test("deleteConfirmText: メディアが無ければ、これまでと同じ文", () => {
+  const { summarizeMedia, deleteConfirmText } = loadCore();
+  assert.equal(deleteConfirmText(summarizeMedia([], ["s_a"])), "この神社の記録を削除します。元に戻せません。よろしいですか？");
+});
+
+test("deleteConfirmText: 種類ごとの件数を出す（0件の種類は出さない）", () => {
+  const { summarizeMedia, deleteConfirmText } = loadCore();
+  const list = [media("m1", "s_a", "photo"), media("m2", "s_a", "photo"), media("m3", "s_a", "memo")];
+  const text = deleteConfirmText(summarizeMedia(list, ["s_a"]));
+  assert.match(text, /写真2枚・メモ1件も削除されます/);
+  assert.doesNotMatch(text, /録音/);
+  assert.match(text, /元に戻せません/);
+});
+
+test("deleteConfirmText: 録音・その他も数える", () => {
+  const { summarizeMedia, deleteConfirmText } = loadCore();
+  const text = deleteConfirmText(summarizeMedia([media("m1", "s_a", "audio"), media("m2", "s_a", "video")], ["s_a"]));
+  assert.match(text, /録音1本・その他1件も削除されます/);
+});
+
+test("deleteConfirmText: IndexedDB を読めなければ「記録だけを削除しますか」と聞く", () => {
+  const { deleteConfirmText } = loadCore();
+  assert.match(deleteConfirmText(null), /^メディア（写真・録音・メモ）を確認できません。記録だけを削除しますか？/);
+});
+
 test("summarizeMedia: 記録が1件も無ければ、すべて孤立", () => {
   const { summarizeMedia } = loadCore();
   assert.equal(summarizeMedia([media("m1", "s_a", "photo"), media("m2", "s_b", "memo")], []).orphans, 2);

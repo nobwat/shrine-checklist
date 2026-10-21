@@ -575,6 +575,7 @@
   //   { op: "add", entry } / { op: "delete", id }
   //   { op: "set", id, field, key, value }（key が無ければ field そのものを value にする）
   //   { op: "replace", id, field, value }（タブのリセットなど、field を丸ごと置き換える）
+  //   { op: "unset", id, field }（field を記録から取り除く。リセットで autoFill などを消すとき）
   // 他の画面で削除された記録への変更は捨てる（削除を優先する）
   function applyChanges(list, changes) {
     for (const c of changes) {
@@ -589,6 +590,8 @@
         list.splice(i, 1);
       } else if (c.op === "replace") {
         e[c.field] = JSON.parse(JSON.stringify(c.value));
+      } else if (c.op === "unset") {
+        delete e[c.field];
       } else if (c.op === "set" && c.key === undefined) {
         // updatedAt は新しい方を残す（他の画面の後の更新を古い時刻で戻さない）
         if (c.field === "updatedAt" && typeof e.updatedAt === "number" && e.updatedAt > c.value) continue;
@@ -736,6 +739,17 @@
       if (!ids.has(m.visitId)) orphans++;
     }
     return { total: mediaList.length, byType, orphans };
+  }
+  // 「この神社を削除」の確認文。media は summarizeMedia の結果、IndexedDB を読めなかったときは null
+  function deleteConfirmText(media) {
+    if (!media) {
+      return "メディア（写真・録音・メモ）を確認できません。記録だけを削除しますか？\n"
+        + "写真などが残っていた場合は、診断画面に「どの記録にも属さないメディア」として表示されます。";
+    }
+    if (!media.total) return "この神社の記録を削除します。元に戻せません。よろしいですか？";
+    const { photo, audio, memo, other } = media.byType;
+    const parts = [photo && `写真${photo}枚`, audio && `録音${audio}本`, memo && `メモ${memo}件`, other && `その他${other}件`].filter(Boolean);
+    return `この神社の記録を削除します。\n${parts.join("・")}も削除されます。\n元に戻せません。よろしいですか？`;
   }
   // ==== data-core:end ====
 
@@ -1153,6 +1167,37 @@
     ]);
     return { version: db.version, createdAt: created && created.value, blobs, recChunks, ...summarizeMedia(media, entryIds) };
   }
+  // 1つの記録のメディアの件数（summarizeMedia の形）
+  async function countMediaOfVisit(visitId) {
+    const db = await openMediaDB();
+    const list = await idbRequest(db.transaction("media", "readonly").objectStore("media").index("visitId").getAll(visitId));
+    return summarizeMedia(list, [visitId]);
+  }
+  // 1つの記録のメディアを、メタ情報・本体・録音途中のチャンクまで1つのトランザクションで消す。
+  // 途中で失敗したら何も消えない（トランザクションが取り消される）。消した件数を返す
+  async function deleteMediaOfVisit(visitId) {
+    const db = await openMediaDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(["media", "blobs", "recChunks"], "readwrite");
+      const media = tx.objectStore("media");
+      const blobs = tx.objectStore("blobs");
+      const chunks = tx.objectStore("recChunks");
+      let count = 0;
+      const req = media.index("visitId").getAllKeys(visitId);
+      req.onsuccess = () => {
+        for (const id of req.result) {
+          media.delete(id);
+          blobs.delete(id);
+          const keys = chunks.index("recId").getAllKeys(id);
+          keys.onsuccess = () => keys.result.forEach(k => chunks.delete(k));
+          count++;
+        }
+      };
+      tx.oncomplete = () => resolve(count);
+      tx.onerror = () => reject(tx.error || new Error("メディアを削除できませんでした"));
+      tx.onabort = () => reject(tx.error || new Error("メディアの削除が中断されました"));
+    });
+  }
 
   // =========================================================
   // 診断画面
@@ -1547,25 +1592,54 @@
   document.getElementById("btn-print").addEventListener("click", () => window.print());
   document.getElementById("btn-reset").addEventListener("click", () => {
     if (!currentId) return;
-    const label = currentTab === "visit" ? "現地記録" : "記事作成チェックリスト";
-    if (!confirm(`「${label}」タブの内容をすべてリセットします。よろしいですか？`)) return;
+    const visit = currentTab === "visit";
+    const text = visit
+      ? "「現地記録」タブの入力をすべてリセットします。\n写真・録音・メモと、位置・天候の記録は残ります。よろしいですか？"
+      : "「記事作成チェックリスト」タブの内容をすべてリセットします。よろしいですか？";
+    if (!confirm(text)) return;
     const entry = entries.find(e => e.id === currentId);
-    const field = currentTab === "visit" ? "visit" : "checks";
+    const field = visit ? "visit" : "checks";
     entry[field] = {};
     recordChange({ op: "replace", id: entry.id, field, value: {} });
-    if (field === "visit") applyVisitToDOM(entry.visit);
-    else applyChecksToDOM(entry.checks);
+    if (visit) {
+      // 自動で入れた値・チェックの記録も消す（field と IndexedDB のメディアは残す）
+      for (const f of ["autoFill", "autoChecks"]) {
+        delete entry[f];
+        recordChange({ op: "unset", id: entry.id, field: f });
+      }
+      applyVisitToDOM(entry.visit);
+    } else {
+      applyChecksToDOM(entry.checks);
+    }
     touchEntry(entry);
     saveEntries();
   });
-  document.getElementById("btn-delete").addEventListener("click", () => {
+  // 削除：先に IndexedDB のメディアを消し、成功したら記録を消す（計画書 リスク7）
+  document.getElementById("btn-delete").addEventListener("click", async () => {
     if (!currentId) return;
-    if (!confirm("この神社の記録を削除します。元に戻せません。よろしいですか？")) return;
+    if (loadFailure) { alert("データを守るため保存を止めているので、削除できません。"); return; }
     const id = currentId;
+    let media = null;
+    try {
+      media = await countMediaOfVisit(id);
+    } catch (e) {
+      media = null; // 開けない・読めない：記録だけを消すかを聞く
+    }
+    if (!confirm(deleteConfirmText(media))) return;
+    if (media) {
+      // 0件でも消しに行く（確認の間に別の画面で増えた分も残さない）
+      try {
+        await deleteMediaOfVisit(id);
+      } catch (e) {
+        logError("delete-media", e);
+        alert(`写真・録音・メモを削除できなかったため、記録も削除していません。\n（${e.message}）`);
+        return;
+      }
+    }
     entries = entries.filter(e => e.id !== id);
     recordChange({ op: "delete", id });
     saveEntries();
-    showList();
+    if (currentId === id) showList();
   });
   document.getElementById("tab-btn-visit").addEventListener("click", () => showTab("visit"));
   document.getElementById("tab-btn-checklist").addEventListener("click", () => showTab("checklist"));

@@ -23,7 +23,7 @@ const CORE = [...CONSTS.map(constLine), between("// ==== data-core:start ====", 
 const EXPORTS = [
   ...CONSTS, "stamp", "isoLocal", "isPlainObject", "entryProblem", "validateEntries", "readStored", "applyChanges", "commitChanges",
   "readMeta", "listBackups", "makeBackup", "pruneBackups", "migrateEntries", "verifyMigration", "runMigration", "recordMigration",
-  "summarizeMedia",
+  "summarizeMedia", "deleteConfirmText",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする

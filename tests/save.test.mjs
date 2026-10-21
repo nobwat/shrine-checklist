@@ -41,6 +41,14 @@ test("applyChanges: replace はその項目を丸ごと置き換える", () => {
   assert.deepEqual(e.checks, {});
 });
 
+test("applyChanges: unset はその項目を取り除き、他の項目は残す（無い項目なら何もしない）", () => {
+  const { applyChanges } = loadCore();
+  const id = "s_test0009iiii";
+  const rec = { id, name: "テスト神社I", visit: { v_date: "2026-10-21" }, autoFill: { v_date: { value: "2026-10-21", state: "auto" } }, field: { startedAt: "2026-10-21T10:00:00+09:00" } };
+  const [e] = applyChanges([clone(rec)], [{ op: "unset", id, field: "autoFill" }, { op: "unset", id, field: "autoChecks" }]);
+  assert.deepEqual(e, { id, name: "テスト神社I", visit: { v_date: "2026-10-21" }, field: { startedAt: "2026-10-21T10:00:00+09:00" } });
+});
+
 test("applyChanges: updatedAt は新しい方を残す", () => {
   const { applyChanges } = loadCore();
   const id = OLD_RECORDS.v1NoVisit.id;
