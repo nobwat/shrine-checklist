@@ -374,8 +374,9 @@ IndexedDB を開けない場合（プライベートブラウズなど）：文�
 ### 天候（STEP 5）
 - **開始時（オンライン）**：`https://api.open-meteo.com/v1/forecast?latitude=…&longitude=…&current=weather_code,temperature_2m,precipitation&timezone=Asia%2FTokyo` を呼ぶ。
 - **再取得**（オフライン・失敗で pending になった記録）：アプリ起動時と `online` イベント時に行う。同じ記録への再試行は10分以上あける。
-  - 参拝から5日未満：`/v1/forecast?...&hourly=weather_code,temperature_2m,precipitation&past_days=<日数>&forecast_days=1` で、参拝時刻の時（`YYYY-MM-DDTHH:00`）の値を使う。
-  - 5日以上：`https://archive-api.open-meteo.com/v1/archive?...&start_date=<日>&end_date=<日>&hourly=...`。値が `null` なら pending のまま残す。
+  - 参拝から92日以内：`/v1/forecast?...&hourly=weather_code,temperature_2m,precipitation&past_days=<日数>&forecast_days=1` で、参拝時刻の時（`YYYY-MM-DDTHH:00`）の値を使う。
+  - 92日を超えたときだけ：`https://archive-api.open-meteo.com/v1/archive?...&start_date=<日>&end_date=<日>&hourly=...`。値が `null` なら pending のまま残す。この場合は「Generated using Copernicus Climate Change Service information」も表示する。
+  - （2026-10-21 変更：当初の「5日で切り替え」から「92日以内は予報 API の past_days」に変更）
 - 各リクエストは AbortController で10秒のタイムアウトを付ける。
 - 送る緯度経度は小数2桁に丸める（設定で解除可）。
 - `v_weather` を手入力済み、または `autoFill.v_weather.state === "manual"` なら、`weather.status = "manual"` にして自動取得を止める。
