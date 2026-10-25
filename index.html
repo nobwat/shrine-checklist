@@ -451,6 +451,7 @@
           <button class="link-button" id="btn-weather-retry">天候をもう一度取得</button>
         </div>
         <p class="weather-credit">Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a></p>
+        <p class="weather-credit hidden" id="weather-archive-credit">Generated using Copernicus Climate Change Service information</p>
       </div>
       <p class="field-warning hidden" id="field-retry">
         <span id="field-retry-text"></span><br>
@@ -1438,15 +1439,53 @@
   // 提供元に関わる処理（URL と応答の読み方）は WEATHER_PROVIDER にまとめる（リスク16：あとで差し替えられるように）
   const WEATHER_TIMEOUT_MS = 10000;                // 1回のリクエストの時間切れ
   const WEATHER_CURRENT_MAX_MS = 60 * 60 * 1000;   // 参拝からこの時間内なら「現在の天候」を参拝時の値として使う
+  const WEATHER_RETRY_GAP_MS = 10 * 60 * 1000;     // 取得待ちの記録を自動で取り直すときは、前回からこれだけあける
+  const WEATHER_PAST_DAYS_MAX = 92;                // 参拝からこの日数以内は予報 API の past_days、超えたら archive
   const WEATHER_PROVIDER = {
     source: "open-meteo",
     credit: { text: "Weather data by Open-Meteo.com", url: "https://open-meteo.com/" },
+    archiveCredit: "Generated using Copernicus Climate Change Service information",
     currentUrl(lat, lon) {
       const q = new URLSearchParams({
         latitude: String(lat), longitude: String(lon),
         current: "weather_code,temperature_2m,precipitation", timezone: "Asia/Tokyo",
       });
       return `https://api.open-meteo.com/v1/forecast?${q}`;
+    },
+    // 参拝時刻の値（92日以内）：予報 API の hourly を past_days 日前から
+    hourlyUrl(lat, lon, pastDays) {
+      const q = new URLSearchParams({
+        latitude: String(lat), longitude: String(lon),
+        hourly: "weather_code,temperature_2m,precipitation", timezone: "Asia/Tokyo",
+        past_days: String(pastDays), forecast_days: "1",
+      });
+      return `https://api.open-meteo.com/v1/forecast?${q}`;
+    },
+    // 参拝時刻の値（92日を超えたとき）：archive API でその日の hourly
+    archiveUrl(lat, lon, date) {
+      const q = new URLSearchParams({
+        latitude: String(lat), longitude: String(lon),
+        start_date: date, end_date: date,
+        hourly: "weather_code,temperature_2m,precipitation", timezone: "Asia/Tokyo",
+      });
+      return `https://archive-api.open-meteo.com/v1/archive?${q}`;
+    },
+    // hourly の応答から、hour（"YYYY-MM-DDTHH:00"）の値で天候の記録を作る。
+    // その時刻が無い・値が null（archive がまだ揃っていない）なら notYet 付きの例外（取得待ちのまま残す）
+    parseHourly(json, hour, basis, now) {
+      const h = json && json.hourly;
+      const i = h && Array.isArray(h.time) ? h.time.indexOf(hour) : -1;
+      const pick = (k) => (i >= 0 && Array.isArray(h[k]) ? h[k][i] : undefined);
+      const code = pick("weather_code"), tempC = pick("temperature_2m"), precip = pick("precipitation");
+      if (!Number.isFinite(code) || !Number.isFinite(tempC)) {
+        throw Object.assign(new Error(`天候の応答に ${hour} の値がまだありません`), { notYet: true });
+      }
+      const at = isoLocal(now);
+      return {
+        code, label: null, tempC,
+        precipitationMm: Number.isFinite(precip) ? precip : null,
+        source: "open-meteo", basis, hour, status: "ok", fetchedAt: at, lastTriedAt: at,
+      };
     },
     // 応答から天候の記録を作る。天気コードか気温が無ければ例外
     parseCurrent(json, now) {
@@ -1503,9 +1542,40 @@
     if (isNaN(at) || Math.abs(now.getTime() - at) > WEATHER_CURRENT_MAX_MS) return "later";
     return "current";
   }
-  // 取得に失敗したときの状態：通信できない・時間切れ・混雑（429・5xx）は "pending"（あとで取り直す）、それ以外は "failed"
+  // 参拝時刻の値をどの API で取るか（5-4）。時刻は API に頼む timezone（Asia/Tokyo、時差 +9 時間・夏時間なし）で数える。
+  // 戻り値：{ kind: "hourly", pastDays, hour } ／ { kind: "archive", date, hour } ／ null（参拝時刻が未来・日時が読めない）
+  function weatherPastRequest(visitAt, now) {
+    const at = Date.parse(visitAt || "");
+    if (isNaN(at) || at > now.getTime()) return null;
+    const JST = 9 * 60 * 60 * 1000, DAY = 24 * 60 * 60 * 1000;
+    const v = new Date(at + JST), n = new Date(now.getTime() + JST);
+    const p2 = (x) => String(x).padStart(2, "0");
+    const date = `${v.getUTCFullYear()}-${p2(v.getUTCMonth() + 1)}-${p2(v.getUTCDate())}`;
+    const hour = `${date}T${p2(v.getUTCHours())}:00`;
+    const days = Math.round((Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate()) - Date.UTC(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate())) / DAY);
+    if (days <= WEATHER_PAST_DAYS_MAX) return { kind: "hourly", pastDays: days, hour };
+    return { kind: "archive", date, hour };
+  }
+  // 起動時・オンラインに戻ったときに、取得待ちの天候を取り直す記録の id。
+  // 前回の試行から10分たっていないものは除く（手入力済みになったものは、状態を manual にするために含める）
+  function weatherRetryTargets(list, now) {
+    const ids = [];
+    for (const entry of list) {
+      const w = entry && entry.field && entry.field.weather;
+      if (!w || w.status !== "pending") continue;
+      const plan = weatherPlan(entry, now);
+      if (plan === "manual") { ids.push(entry.id); continue; }
+      if (plan !== "later" && plan !== "current") continue;
+      const tried = Date.parse(w.lastTriedAt || "");
+      if (!isNaN(tried) && now.getTime() - tried < WEATHER_RETRY_GAP_MS) continue;
+      ids.push(entry.id);
+    }
+    return ids;
+  }
+  // 取得に失敗したときの状態：通信できない・時間切れ・混雑（429・5xx）・値がまだ無いは "pending"（あとで取り直す）、それ以外は "failed"
   function weatherFailureStatus(err, online) {
     if (online === false) return "pending";
+    if (err && err.notYet) return "pending";
     if (err && (err.name === "AbortError" || err.name === "TypeError")) return "pending";
     const st = err && err.httpStatus;
     if (st === 429 || st >= 500) return "pending";
@@ -1520,7 +1590,7 @@
   function weatherStatusText(entry, plan) {
     const w = entry.field && entry.field.weather;
     if (plan === "manual") return `天候：手入力${isBlankValue(entry.visit && entry.visit.v_weather) ? "" : `（${entry.visit.v_weather}）`}`;
-    if (w && w.status === "ok") return `天候：${weatherText(w)}`;
+    if (w && w.status === "ok") return `天候：${weatherText(w)}${w.basis === "hourly" || w.basis === "archive" ? "（参拝した時刻の値）" : ""}`;
     if (w && w.status === "pending") return plan === "later" ? "天候：取得待ち（参拝した時刻の値を、あとで取得します）" : "天候：取得待ち（通信できるときに取得します）";
     if (w && w.status === "failed") return "天候：取得できませんでした（現地記録タブで手入力できます）";
     if (plan === "no-location") return "天候：位置が分からないため取得できません（現地記録タブで手入力できます）";
@@ -2415,7 +2485,7 @@
         <div class="field">
           <label for="${f.id}">${f.label}${badge}</label>
           <input id="${f.id}" type="${f.type}" data-visit-id="${f.id}" ${f.placeholder ? `placeholder="${f.placeholder}"` : ""}>
-          ${f.id === "v_weather" ? `<p class="weather-credit hidden" id="weather-credit-detail">Weather data by <a href="${WEATHER_PROVIDER.credit.url}" target="_blank" rel="noopener">Open-Meteo.com</a></p>` : ""}
+          ${f.id === "v_weather" ? `<p class="weather-credit hidden" id="weather-credit-detail">Weather data by <a href="${WEATHER_PROVIDER.credit.url}" target="_blank" rel="noopener">Open-Meteo.com</a></p><p class="weather-credit hidden" id="weather-archive-credit-detail">${WEATHER_PROVIDER.archiveCredit}</p>` : ""}
         </div>`;
     }
     if (f.type === "radio") {
@@ -2633,7 +2703,11 @@
     });
     // 天候の自動の値が入っている記録には、提供元の表記を出す（CC BY 4.0）
     const credit = document.getElementById("weather-credit-detail");
-    if (credit) credit.classList.toggle("hidden", !(entry.field && entry.field.weather && entry.field.weather.status === "ok"));
+    const w = entry.field && entry.field.weather;
+    if (credit) credit.classList.toggle("hidden", !(w && w.status === "ok"));
+    // archive の値なら Copernicus の表記も出す
+    const archive = document.getElementById("weather-archive-credit-detail");
+    if (archive) archive.classList.toggle("hidden", !(w && w.status === "ok" && w.basis === "archive"));
   }
 
   // =========================================================
@@ -2775,21 +2849,36 @@
 
   // ---------- 天候 ----------
   const weatherInFlight = new Set(); // 天候を取得中の下書きの id
-  // 天候 API を1回呼ぶ。10秒で打ち切る。HTTP のエラーは httpStatus 付きの例外にする
-  async function requestCurrentWeather(loc) {
+  // 天候 API を1回呼ぶ。10秒で打ち切る。HTTP のエラーは httpStatus 付きの例外にする。
+  // 参拝から1時間以内なら現在の天候、それより前なら参拝時刻の値（92日以内は予報 API の past_days、超えたら archive）
+  async function requestWeather(field) {
+    const now = new Date();
+    const loc = field.location;
     const round = readSettings().roundLocationForApi !== false;
-    const url = WEATHER_PROVIDER.currentUrl(roundCoordForApi(loc.lat, round), roundCoordForApi(loc.lon, round));
+    const lat = roundCoordForApi(loc.lat, round), lon = roundCoordForApi(loc.lon, round);
+    const visitAt = field.visitAt || field.startedAt;
+    const at = Date.parse(visitAt || "");
+    let url, parse;
+    if (!isNaN(at) && Math.abs(now.getTime() - at) <= WEATHER_CURRENT_MAX_MS) {
+      url = WEATHER_PROVIDER.currentUrl(lat, lon);
+      parse = (json) => WEATHER_PROVIDER.parseCurrent(json, new Date());
+    } else {
+      const req = weatherPastRequest(visitAt, now);
+      if (!req) throw Object.assign(new Error("参拝した時刻がまだ来ていません"), { notYet: true });
+      url = req.kind === "hourly" ? WEATHER_PROVIDER.hourlyUrl(lat, lon, req.pastDays) : WEATHER_PROVIDER.archiveUrl(lat, lon, req.date);
+      parse = (json) => WEATHER_PROVIDER.parseHourly(json, req.hour, req.kind, new Date());
+    }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), WEATHER_TIMEOUT_MS);
     try {
       const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
       if (!res.ok) throw Object.assign(new Error(`天候 API が ${res.status} を返しました`), { httpStatus: res.status });
-      return WEATHER_PROVIDER.parseCurrent(await res.json(), new Date());
+      return parse(await res.json());
     } finally {
       clearTimeout(timer);
     }
   }
-  // 下書きの天候を取って記録し、天候の欄が空なら自動で入れる。
+  // 記録の天候を取って記録し、天候の欄が空なら自動で入れる。
   // force：「天候をもう一度取得」から（取得済みでも取り直す。手入力の欄は書き換えない）
   async function fetchWeather(visitId, force) {
     if (weatherInFlight.has(visitId)) return;
@@ -2797,12 +2886,11 @@
     if (!entry) return;
     const plan = weatherPlan(entry, new Date());
     const prev = entry.field && entry.field.weather;
-    const go = plan === "current" || (force && (plan === "done" || plan === "manual"));
+    const go = plan === "current" || plan === "later" || (force && (plan === "done" || plan === "manual"));
     if (!go) {
-      // 手入力済みなら、自動の取得を止めたことを記録する。時間がたっていれば取得待ちにする（参拝時刻の値は 5-4 で取る）
+      // 手入力済みなら、自動の取得を止めたことを記録する
       let next = null;
       if (plan === "manual" && (!prev || prev.status !== "manual")) next = { ...(prev || {}), status: "manual" };
-      else if (plan === "later" && !prev) next = weatherAfterFailure(null, "pending", new Date());
       if (next) {
         editEntry(entry, "field", "weather", next);
         saveEntries();
@@ -2815,7 +2903,7 @@
     let w = null, failure = null;
     try {
       if (navigator.onLine === false) throw new Error("オフライン");
-      w = await requestCurrentWeather(entry.field.location);
+      w = await requestWeather(entry.field);
     } catch (e) {
       failure = weatherFailureStatus(e, navigator.onLine);
       if (failure === "failed") logError("weather", e); // 通信できない・時間切れは利用者の環境なので残さない
@@ -2839,6 +2927,20 @@
     if (visitId === fieldId) renderFieldWeather(entry, failure);
     if (visitId === currentId) fillDetail(entry);
   }
+  // 取得待ちの天候を、起動時とオンラインに戻ったときに取り直す（同じ記録は10分あける）。1件ずつ順に取る
+  let weatherRetrying = false;
+  async function retryPendingWeather() {
+    if (weatherRetrying || loadFailure || navigator.onLine === false) return;
+    weatherRetrying = true;
+    try {
+      for (const id of weatherRetryTargets(entries, new Date())) {
+        if (navigator.onLine === false) break;
+        await fetchWeather(id, false).catch(e => logError("weather", e));
+      }
+    } finally {
+      weatherRetrying = false;
+    }
+  }
   // 現地モードの天候の表示。failure：今回の取得に失敗したときの状態
   function renderFieldWeather(entry, failure) {
     const busy = !!entry && weatherInFlight.has(entry.id);
@@ -2851,6 +2953,7 @@
     el.classList.toggle("warn", !busy && (!!failure || (!!w && w.status === "failed")));
     const loc = entry && entry.field && entry.field.location;
     document.getElementById("btn-weather-retry").disabled = busy || !hasCoords(loc);
+    document.getElementById("weather-archive-credit").classList.toggle("hidden", !(w && w.status === "ok" && w.basis === "archive"));
   }
 
   // 現地モードの上に、参拝日時と時間帯を出す（時間帯は現地記録タブの値。手で直していればその値）
@@ -3756,7 +3859,10 @@
       await cleanupStaleDrafts().catch(e => logError("draft-cleanup", e));
     }, () => {});
     requestPersist();
+    // 取得待ちの天候を取り直す（参拝時刻の値。5-4）
+    if (storageOK) retryPendingWeather().catch(e => logError("weather", e));
   })();
+  window.addEventListener("online", () => { retryPendingWeather().catch(e => logError("weather", e)); });
 
   // ---------- PWA: service worker登録（https公開後に有効化されます） ----------
   if ("serviceWorker" in navigator) {

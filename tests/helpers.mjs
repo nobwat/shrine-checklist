@@ -37,7 +37,8 @@ const EXPORTS = [
   "AUTO_FILL_KEYS", "planAutoFill", "isAutoValue",
   "GEO_OPTIONS", "GEO_APP_TIMEOUT_MS", "GEO_COARSE_M", "geoErrorStatus", "locationFromPosition", "parseManualLocation",
   "manualLocation", "hasCoords", "locationAfterFailure", "isCoarseLocation", "locationText",
-  "WEATHER_TIMEOUT_MS", "WEATHER_CURRENT_MAX_MS", "WEATHER_PROVIDER", "roundCoordForApi", "weatherLabel", "weatherText",
+  "WEATHER_TIMEOUT_MS", "WEATHER_CURRENT_MAX_MS", "WEATHER_RETRY_GAP_MS", "WEATHER_PAST_DAYS_MAX", "WEATHER_PROVIDER",
+  "weatherPastRequest", "weatherRetryTargets", "roundCoordForApi", "weatherLabel", "weatherText",
   "isManualWeather", "weatherPlan", "weatherFailureStatus", "weatherAfterFailure", "weatherStatusText",
 ];
 
