@@ -203,6 +203,17 @@
     position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column;
     padding: 0.8rem 1rem calc(0.8rem + env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto;
   }
+  .photo-viewer {
+    position: fixed; inset: 0; z-index: 60; background: #1b1a18; display: flex; flex-direction: column;
+    padding: 0.8rem 1rem calc(0.8rem + env(safe-area-inset-bottom)); overflow-y: auto;
+  }
+  .photo-viewer-pic { flex: 1; min-height: 40vh; display: flex; align-items: center; justify-content: center; }
+  .photo-viewer-pic img { max-width: 100%; max-height: 62vh; object-fit: contain; }
+  .photo-viewer-status { font-size: 0.74rem; color: #d8d2c4; text-align: center; min-height: 1.2em; margin: 0.4rem 0; }
+  .photo-viewer-status.error { color: #f0a49c; }
+  .photo-viewer-title { font-size: 0.72rem; color: #d8d2c4; text-align: center; margin: 0 0 0.4rem; }
+  .photo-viewer .label-buttons { margin-bottom: 0.8rem; }
+  .photo-viewer .label-buttons button.unset { background: transparent; color: #d8d2c4; border-color: #d8d2c4; }
   .memo-title { font-size: 0.9rem; color: var(--gold); letter-spacing: 0.08em; margin: 0; }
   .memo-hint { font-size: 0.72rem; color: var(--sub); margin: 0.2rem 0 0.6rem; }
   /* 文字は20px以上（現地で読み書きしやすいように） */
@@ -346,7 +357,7 @@
 
   @media print {
     .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
-    .load-error, .test-badge, .auto-badge, .autofill-redo, .detail-media, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
+    .load-error, .test-badge, .auto-badge, .autofill-redo, .detail-media, .memo-overlay, .photo-viewer, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -494,18 +505,28 @@
         <p class="rec-wake hidden" id="rec-wake">録音中は画面を消さないようにしています</p>
         <button class="rec-stop" id="btn-rec-stop">停止して保存</button>
       </div>
-      <!-- 一言メモ：画面いっぱいの大きな入力欄。入力は自動で保存する -->
-      <div class="memo-overlay hidden" id="memo-overlay" role="dialog" aria-label="一言メモ">
-        <p class="memo-title" id="memo-title">一言メモ</p>
-        <p class="memo-hint">キーボードのマイクボタンで音声入力もできます。入力した内容は自動で保存されます。</p>
-        <textarea id="memo-text" class="memo-text" placeholder="ここに書く"></textarea>
-        <p class="memo-status" id="memo-status" aria-live="polite"></p>
-        <button class="memo-done" id="btn-memo-done">閉じる</button>
-      </div>
       <!-- capture 付き：カメラが開く。capture なし：ギャラリー（カメラ中にブラウザが落ちたときの逃げ道） -->
       <input type="file" id="photo-camera" accept="image/*" capture="environment" class="hidden">
       <input type="file" id="photo-gallery" accept="image/*" multiple class="hidden">
     </div>
+  </div>
+
+  <!-- 一言メモ：画面いっぱいの大きな入力欄。入力は自動で保存する（現地モードと現地記録タブの両方から開く） -->
+  <div class="memo-overlay hidden" id="memo-overlay" role="dialog" aria-label="一言メモ">
+    <p class="memo-title" id="memo-title">一言メモ</p>
+    <p class="memo-hint">キーボードのマイクボタンで音声入力もできます。入力した内容は自動で保存されます。</p>
+    <textarea id="memo-text" class="memo-text" placeholder="ここに書く"></textarea>
+    <p class="memo-status" id="memo-status" aria-live="polite"></p>
+    <button class="memo-done" id="btn-memo-done">閉じる</button>
+  </div>
+
+  <!-- 写真の全画面表示とラベル選択（現地記録タブの「現地モードの記録」欄から開く） -->
+  <div class="photo-viewer hidden" id="photo-viewer" role="dialog" aria-label="写真">
+    <div class="photo-viewer-pic"><img id="photo-viewer-img" alt=""></div>
+    <p class="photo-viewer-status" id="photo-viewer-status" aria-live="polite"></p>
+    <p class="photo-viewer-title">ラベル</p>
+    <div class="label-buttons" id="photo-viewer-labels"></div>
+    <button class="memo-done" id="btn-photo-viewer-close">閉じる</button>
   </div>
 
   <!-- 設定画面 -->
@@ -2615,6 +2636,7 @@
     const metaHTML = `<div class="meta-grid">${VISIT_META.map(renderMetaField).join("")}</div>`
       + `<div class="autofill-redo hidden" id="autofill-redo"><button class="link-button" id="btn-autofill-redo">自動値を入れ直す</button><p class="autofill-redo-hint" id="autofill-redo-hint"></p></div>`
       + `<section class="detail-media hidden" id="detail-media"><p class="section-title">現地モードの記録</p>`
+      + `<p class="section-note">写真をタップすると大きく表示して、ラベルを選べます。メモはタップで書き直せます。</p>`
       + `<p class="detail-media-status" id="detail-media-status"></p><div id="detail-media-items"></div></section>`;
     const sectionsHTML = VISIT_SECTIONS.map(sec => {
       const note = sec.note ? `<p class="section-note">${sec.note}</p>` : "";
@@ -3234,7 +3256,99 @@
       box.innerHTML = `<p class="field-items-empty">写真・録音・メモはありません。</p>`;
       return;
     }
-    buildMediaRows(list, thumbs, detailUrls, { status: setDetailMediaStatus, fullMemo: true }).forEach(r => box.appendChild(r));
+    buildMediaRows(list, thumbs, detailUrls, {
+      status: setDetailMediaStatus,
+      fullMemo: true,
+      photo: (m) => openPhotoViewer(m).catch(e => logError("photo-viewer", e)),
+      memo: (m) => openMemoEditor(m, m.visitId, "detail"),
+      remove: (m, title) => removeDetailItem(m, title).catch(e => logError("media-delete", e)),
+    }).forEach(r => box.appendChild(r));
+  }
+  // 開いている記録の欄を描き直してから、知らせを出す（描き直すと知らせが消えるため）
+  async function refreshDetailMedia(visitId, text) {
+    const entry = entries.find(e => e.id === visitId);
+    if (!entry || currentId !== visitId) return;
+    await renderDetailMedia(entry);
+    if (text) setDetailMediaStatus(text);
+  }
+  async function removeDetailItem(m, title) {
+    if (!confirm(`${title}を削除します。元に戻せません。よろしいですか？`)) return;
+    try {
+      await deleteMediaItem(m.id);
+    } catch (e) {
+      logError("media-delete", e);
+      alert(`削除できませんでした（${e.message}）`);
+      return;
+    }
+    touchDraft(m.visitId);
+    await refreshDetailMedia(m.visitId, `${title}を削除しました`);
+  }
+
+  // ---------- 写真の全画面表示とラベル（STEP 6-2） ----------
+  let viewer = null; // 開いている写真 { media, url }
+  function setViewerStatus(text, isError) {
+    const el = document.getElementById("photo-viewer-status");
+    el.textContent = text;
+    el.classList.toggle("error", !!isError);
+  }
+  async function openPhotoViewer(m) {
+    closePhotoViewer();
+    const v = { media: m, url: null };
+    viewer = v;
+    const img = document.getElementById("photo-viewer-img");
+    img.removeAttribute("src");
+    img.alt = photoLabelName(m.label) || "写真";
+    renderViewerLabels();
+    setViewerStatus("読み込んでいます…");
+    document.getElementById("photo-viewer").classList.remove("hidden");
+    const stored = await getMediaBlob(m.id);
+    if (viewer !== v) return; // 読んでいる間に閉じた
+    const blob = stored && (stored.blob || stored.thumb);
+    if (!blob) { setViewerStatus("写真のデータが見つかりません", true); return; }
+    v.url = URL.createObjectURL(blob);
+    img.onload = () => { if (viewer === v) setViewerStatus(""); };
+    img.onerror = () => { if (viewer === v) setViewerStatus("この写真は、この端末では表示できません（ラベルは選べます）", true); };
+    img.src = v.url;
+  }
+  // ラベルのボタン。今のラベルは色を付け、ラベルがあれば「ラベルを外す」も出す
+  function renderViewerLabels() {
+    const box = document.getElementById("photo-viewer-labels");
+    box.innerHTML = "";
+    const current = viewer && viewer.media.label;
+    const add = (text, key, cls) => {
+      const b = document.createElement("button");
+      b.textContent = text;
+      if (cls) b.classList.add(cls);
+      b.addEventListener("click", () => setViewerLabel(key).catch(e => logError("photo-label", e)));
+      box.appendChild(b);
+    };
+    PHOTO_LABELS.forEach(l => add(l.name, l.key, l.key === current ? "selected" : null));
+    if (current) add("ラベルを外す", null, "unset");
+  }
+  async function setViewerLabel(key) {
+    const v = viewer;
+    if (!v) return;
+    try {
+      await updateMediaMeta(v.media.id, { label: key });
+    } catch (e) {
+      logError("photo-label", e);
+      setViewerStatus(`ラベルを保存できませんでした（${e.message}）`, true);
+      return;
+    }
+    v.media = { ...v.media, label: key };
+    if (viewer === v) {
+      renderViewerLabels();
+      setViewerStatus(key ? `ラベル「${photoLabelName(key)}」を付けました` : "ラベルを外しました");
+    }
+    await refreshDetailMedia(v.media.visitId, "");
+  }
+  function closePhotoViewer() {
+    if (viewer && viewer.url) URL.revokeObjectURL(viewer.url);
+    viewer = null;
+    const img = document.getElementById("photo-viewer-img");
+    img.onload = img.onerror = null;
+    img.removeAttribute("src");
+    document.getElementById("photo-viewer").classList.add("hidden");
   }
   async function removeFieldItem(m, title) {
     if (!confirm(`${title}を削除します。元に戻せません。よろしいですか？`)) return;
@@ -3594,19 +3708,20 @@
 
   // ---------- 一言メモ ----------
   // 開いているメモ。null なら閉じている
-  //   { visitId, meta（まだ作っていなければ null）, dirty, timer, queue, failed }
+  //   { visitId, where（"field" 現地モード／"detail" 現地記録タブ）, meta（まだ作っていなければ null）, dirty, timer, queue, failed }
   let memo = null;
   function setMemoStatus(text, isError) {
     const el = document.getElementById("memo-status");
     el.textContent = text;
     el.classList.toggle("error", !!isError);
   }
-  // existing：一覧から開いたメモのメタ情報。新しく書くときは null
-  function openMemoEditor(existing) {
-    if (!fieldId || memo || rec) return;
-    hideLabelPanel();
+  // existing：一覧から開いたメモのメタ情報。新しく書くときは null。
+  // 現地記録タブからは書き直しだけ（visitId と where: "detail" を渡す）
+  function openMemoEditor(existing, visitId = fieldId, where = "field") {
+    if (!visitId || memo || rec) return;
+    if (where === "field") hideLabelPanel();
     flushPendingSave();
-    memo = { visitId: fieldId, meta: existing || null, dirty: false, timer: null, queue: Promise.resolve(), failed: false };
+    memo = { visitId, where, meta: existing || null, dirty: false, timer: null, queue: Promise.resolve(), failed: false };
     const ta = document.getElementById("memo-text");
     ta.value = existing ? existing.text || "" : "";
     document.getElementById("memo-title").textContent = existing ? "一言メモ（書き直し）" : "一言メモ";
@@ -3670,6 +3785,10 @@
     memo = null;
     document.getElementById("memo-overlay").classList.add("hidden");
     document.getElementById("memo-text").blur();
+    if (m.where === "detail") {
+      await refreshDetailMedia(m.visitId, m.meta ? "メモを保存しました" : "");
+      return;
+    }
     if (m.meta) setFieldStatus("メモを保存しました");
     if (m.visitId === fieldId) await renderFieldItems();
   }
@@ -3845,6 +3964,7 @@
   document.getElementById("screen-settings").addEventListener("change", onSettingChange);
   document.getElementById("memo-text").addEventListener("input", onMemoInput);
   document.getElementById("btn-memo-done").addEventListener("click", () => closeMemoEditor().catch(e => logError("memo", e)));
+  document.getElementById("btn-photo-viewer-close").addEventListener("click", closePhotoViewer);
   // 「閉じる」を押す前にアプリを閉じても消えないよう、隠れるときに保存する
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushMemo(); });
   window.addEventListener("pagehide", () => flushMemo());
