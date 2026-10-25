@@ -14,7 +14,7 @@ const TB = { early: "04:00", day: "07:00", evening: "16:00", night: "19:00" };
 test("readSettings: 保存されていなければ既定値（写真2048・録音3分・時間帯の既定の境界）", () => {
   const core = loadCore();
   assert.equal(core.SETTINGS_KEY, "shrine-settings");
-  assert.deepEqual(core.readSettings(), { photoMaxEdge: 2048, audioMaxSec: 180, timebands: TB });
+  assert.deepEqual(core.readSettings(), { photoMaxEdge: 2048, audioMaxSec: 180, timebands: TB, roundLocationForApi: true });
   assert.equal(core.storage.getItem(core.SETTINGS_KEY), null, "読むだけでは書かない");
 });
 
@@ -22,21 +22,21 @@ test("readSettings: 壊れた JSON・配列・知らない値は既定値で補�
   for (const raw of ["{壊れた", "[1,2]", "null", JSON.stringify({ photoMaxEdge: 999, audioMaxSec: "180" })]) {
     const core = loadCore();
     core.storage.setItem(core.SETTINGS_KEY, raw);
-    assert.deepEqual(core.readSettings(), { photoMaxEdge: 2048, audioMaxSec: 180, timebands: TB }, raw);
+    assert.deepEqual(core.readSettings(), { photoMaxEdge: 2048, audioMaxSec: 180, timebands: TB, roundLocationForApi: true }, raw);
   }
 });
 
 test("readSettings: 選べる値はそのまま読む", () => {
   const core = loadCore();
   core.storage.setItem(core.SETTINGS_KEY, JSON.stringify({ photoMaxEdge: "max", audioMaxSec: 600 }));
-  assert.deepEqual(core.readSettings(), { photoMaxEdge: "max", audioMaxSec: 600, timebands: TB });
+  assert.deepEqual(core.readSettings(), { photoMaxEdge: "max", audioMaxSec: 600, timebands: TB, roundLocationForApi: true });
 });
 
-test("normalizeSettings: 5-5 で足す位置の丸めなど、知らない項目は消さずに残す", () => {
+test("normalizeSettings: 知らない項目は消さずに残す", () => {
   const core = loadCore();
   const tb = { early: "04:00", day: "07:00", evening: "16:00", night: "19:00" };
-  assert.deepEqual(core.normalizeSettings({ timebands: tb, roundLocationForApi: true, photoMaxEdge: 1600 }),
-    { timebands: tb, roundLocationForApi: true, photoMaxEdge: 1600, audioMaxSec: 180 });
+  assert.deepEqual(core.normalizeSettings({ timebands: tb, roundLocationForApi: true, photoMaxEdge: 1600, fromFuture: "x" }),
+    { timebands: tb, roundLocationForApi: true, photoMaxEdge: 1600, audioMaxSec: 180, fromFuture: "x" });
 });
 
 // ---------- 書く ----------
@@ -120,4 +120,27 @@ test("storageWarning: 上限や使用量が分からなければ警告しない�
   assert.equal(storageWarning(100, 0), null);
   assert.equal(storageWarning(undefined, 10 * GB), null);
   assert.deepEqual(storageWarning(11 * GB, 10 * GB), { remaining: 0, quota: 10 * GB });
+});
+
+// ---------- 位置の丸め（5-5） ----------
+
+test("位置の丸め: 既定はオン。保存されていれば、その値を読む", () => {
+  const core = loadCore();
+  assert.equal(core.readSettings().roundLocationForApi, true);
+  core.writeSettings({ roundLocationForApi: false });
+  assert.equal(stored(core).roundLocationForApi, false);
+  assert.equal(core.readSettings().roundLocationForApi, false);
+  core.writeSettings({ roundLocationForApi: true });
+  assert.equal(core.readSettings().roundLocationForApi, true);
+});
+
+test("位置の丸め: 真偽値でなければ、読むときはオンで補い、書くときは断る", () => {
+  for (const bad of ["false", 0, null, "no"]) {
+    const core = loadCore();
+    core.storage.setItem(core.SETTINGS_KEY, JSON.stringify({ roundLocationForApi: bad }));
+    assert.equal(core.readSettings().roundLocationForApi, true, String(bad));
+    const before = core.storage.getItem(core.SETTINGS_KEY);
+    assert.throws(() => core.writeSettings({ roundLocationForApi: bad }), /位置の丸め/);
+    assert.equal(core.storage.getItem(core.SETTINGS_KEY), before);
+  }
 });

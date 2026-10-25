@@ -137,6 +137,9 @@
   .field-weather { margin: 0 0 1.2rem; }
   .weather-credit { font-size: 0.64rem; color: var(--sub); margin: 0.1rem 0 0; }
   .weather-credit a { color: inherit; }
+  .autofill-redo { margin: 0 0 1.2rem; }
+  .autofill-redo .link-button { padding-left: 0; }
+  .autofill-redo-hint { font-size: 0.7rem; color: var(--sub); margin: 0.1rem 0 0; min-height: 1em; }
   .field-geo-text { font-size: 0.72rem; color: var(--sub); margin: 0; }
   .field-geo-text.warn { color: #b5413a; }
   .field-geo-actions { display: flex; gap: 0.2rem; margin-left: -0.5rem; }
@@ -340,7 +343,7 @@
 
   @media print {
     .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
-    .load-error, .test-badge, .auto-badge, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
+    .load-error, .test-badge, .auto-badge, .autofill-redo, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -534,6 +537,13 @@
         <label>日中の始まり <input type="time" data-timeband="day"></label>
         <label>夕方の始まり <input type="time" data-timeband="evening"></label>
         <label>夜の始まり <input type="time" data-timeband="night"></label>
+      </div>
+    </section>
+    <section>
+      <h2 class="section-title">天候を取るときの位置</h2>
+      <p class="section-note">天候は、位置（緯度経度）を Open-Meteo に送って取得します。丸めると、送る位置を約1kmの粗さにします（神社の場所までは分からない程度）。端末の中の記録は丸めません。</p>
+      <div class="settings-options" id="settings-round">
+        <label><input type="checkbox" name="roundLocationForApi"> 位置を約1kmに丸めて送る（おすすめ）</label>
       </div>
     </section>
     <p class="save-hint" id="settings-hint"> </p>
@@ -761,7 +771,7 @@
   const ERRORLOG_KEY = "shrine-errorlog";
   const SETTINGS_KEY = "shrine-settings";
   const ERRORLOG_KEEP = 10;
-  const APP_VERSION = "2.0.0-dev.4";
+  const APP_VERSION = "2.0.0-dev.5";
   const IDB_NAME = "shrine-checklist"; // 写真・録音・メモ（計画書 3.3）
   const IDB_VERSION = 1;
   const IDB_OPEN_TIMEOUT_MS = 10000;   // 応答が無いまま止まるブラウザがあるため
@@ -1597,6 +1607,26 @@
     return "天候：まだ取得していません";
   }
 
+  // 診断画面に出す天候の集計（現地モードの記録だけ数える）
+  function summarizeWeather(list) {
+    const s = { visits: 0, ok: 0, current: 0, hourly: 0, archive: 0, pending: 0, failed: 0, manual: 0, none: 0 };
+    for (const e of list) {
+      if (!e || !isPlainObject(e.field)) continue;
+      s.visits++;
+      const w = e.field.weather;
+      if (!w || !w.status) { s.none++; continue; }
+      if (w.status === "ok") {
+        s.ok++;
+        if (w.basis === "current" || w.basis === "hourly" || w.basis === "archive") s[w.basis]++;
+      } else if (w.status === "pending" || w.status === "failed" || w.status === "manual") {
+        s[w.status]++;
+      } else {
+        s.none++;
+      }
+    }
+    return s;
+  }
+
   // ---------- 自動で入れる値（計画書 3.2） ----------
   const AUTO_FILL_KEYS = ["v_date", "v_timeband", "v_weather"];
   function isBlankValue(v) {
@@ -1617,6 +1647,23 @@
     }
     return { visit, autoFill };
   }
+  // 「自動値を入れ直す」（5-5）で使う値：参拝日・時間帯（参拝日時から。時間帯の境界は今の設定）と、取れている天候。
+  // 入れてよいかは planAutoFill で決める（空欄で、手で直していない項目だけ）
+  function autoFillValuesFor(entry, timebands) {
+    const f = isPlainObject(entry.field) ? entry.field : {};
+    const at = f.visitAt || f.startedAt;
+    const values = {};
+    const t = typeof at === "string" ? Date.parse(at) : NaN;
+    if (!isNaN(t) && /^\d{4}-\d{2}-\d{2}T/.test(at)) {
+      values.v_date = at.slice(0, 10); // 記録したときの日付（時差付きの文字のまま）
+      values.v_timeband = timebandOf(new Date(t), timebands);
+    }
+    if (f.weather && f.weather.status === "ok") {
+      const text = weatherText(f.weather);
+      if (text) values.v_weather = text;
+    }
+    return values;
+  }
   // 「自動」バッジを出すか：今の値が自動で入れた値のままで、手で直していないときだけ
   // （古い版のアプリで直された場合も、値が違うので自動ではないと分かる）
   function isAutoValue(entry, key) {
@@ -1625,7 +1672,7 @@
   }
 
   // ---------- 設定（shrine-settings。計画書 3.5） ----------
-  // 写真の大きさ・録音の上限・時間帯の境界。ほかの項目（5-5 で足す位置の丸めなど）は、読み書きしても消さずに残す
+  // 写真の大きさ・録音の上限・時間帯の境界・位置の丸め。知らない項目は、読み書きしても消さずに残す
   const PHOTO_MAX_EDGE_CHOICES = [1600, 2048, "max"];
   function normalizeSettings(raw) {
     const s = isPlainObject(raw) ? raw : {};
@@ -1634,6 +1681,8 @@
       photoMaxEdge: PHOTO_MAX_EDGE_CHOICES.includes(s.photoMaxEdge) ? s.photoMaxEdge : PHOTO_MAX_EDGE_DEFAULT,
       audioMaxSec: AUDIO_MAX_SEC_CHOICES.includes(s.audioMaxSec) ? s.audioMaxSec : AUDIO_MAX_SEC_DEFAULT,
       timebands: timebandsProblem(s.timebands) ? { ...TIMEBANDS_DEFAULT } : { ...s.timebands },
+      // 天候 API へ送る緯度経度を小数2桁に丸めるか（既定はオン。Q1）
+      roundLocationForApi: typeof s.roundLocationForApi === "boolean" ? s.roundLocationForApi : true,
     };
   }
   // 保存されている設定。無い・壊れている・知らない値のときは既定値で補う（設定が読めなくても現地モードは使える）
@@ -1650,6 +1699,7 @@
       const problem = timebandsProblem(patch.timebands);
       if (problem) throw new Error(problem);
     }
+    if ("roundLocationForApi" in patch && typeof patch.roundLocationForApi !== "boolean") throw new Error(`位置の丸めに ${patch.roundLocationForApi} は選べません`);
     const next = { ...readSettings(), ...patch };
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
     return next;
@@ -2253,6 +2303,7 @@
     L.push(`写真の大きさ: ${st.photoMaxEdge === "max" ? "元サイズ（最大約1,670万画素）" : `長辺${st.photoMaxEdge}px`}`);
     L.push(`録音の上限: ${formatDuration(st.audioMaxSec)}`);
     L.push(`時間帯の境界: ${TIMEBAND_KEYS.map(k => `${TIMEBAND_LABELS[k]} ${st.timebands[k]}`).join("・")}`);
+    L.push(`位置の丸め（天候 API へ送るとき）: ${st.roundLocationForApi ? "オン（小数2桁）" : "オフ"}`);
 
     L.push("", "■ 位置情報");
     L.push(`API: ${navigator.geolocation ? "あり" : "なし"}`);
@@ -2260,6 +2311,17 @@
       const p = navigator.permissions && await navigator.permissions.query({ name: "geolocation" });
       L.push(`許可の状態: ${p ? { granted: "許可", denied: "拒否", prompt: "未確認（使うときに聞かれる）" }[p.state] || p.state : "取得できません"}`);
     } catch (e) { L.push("許可の状態: 取得できません"); }
+
+    L.push("", "■ 天候");
+    L.push(`提供元: ${WEATHER_PROVIDER.source}（${WEATHER_PROVIDER.credit.text}）`);
+    L.push(`通信: ${navigator.onLine === false ? "オフライン" : "オンライン"}`);
+    if (!loadFailure) {
+      const ws = summarizeWeather(entries);
+      L.push(`現地モードの記録: ${ws.visits}件`);
+      L.push(`  取得済み ${ws.ok}件（現在の値 ${ws.current}・参拝時刻の値 ${ws.hourly}・archive ${ws.archive}）`);
+      L.push(`  取得待ち ${ws.pending}件・失敗 ${ws.failed}件・手入力 ${ws.manual}件・未取得 ${ws.none}件`);
+      L.push(`  今すぐ取り直す対象: ${weatherRetryTargets(entries, new Date()).length}件（同じ記録は${WEATHER_RETRY_GAP_MS / 60000}分あける）`);
+    }
 
     L.push("", "■ 録音形式（MediaRecorder）");
     if (typeof MediaRecorder === "undefined") {
@@ -2547,7 +2609,8 @@
   }
 
   function buildVisitHTML() {
-    const metaHTML = `<div class="meta-grid">${VISIT_META.map(renderMetaField).join("")}</div>`;
+    const metaHTML = `<div class="meta-grid">${VISIT_META.map(renderMetaField).join("")}</div>`
+      + `<div class="autofill-redo hidden" id="autofill-redo"><button class="link-button" id="btn-autofill-redo">自動値を入れ直す</button><p class="autofill-redo-hint" id="autofill-redo-hint"></p></div>`;
     const sectionsHTML = VISIT_SECTIONS.map(sec => {
       const note = sec.note ? `<p class="section-note">${sec.note}</p>` : "";
       const checkFields = sec.fields.filter(f => f.type === "check" || f.type === "checknote");
@@ -2688,6 +2751,7 @@
     showScreen("detail");
     fillDetail(entry);
     document.getElementById("save-hint").textContent = " ";
+    document.getElementById("autofill-redo-hint").textContent = "";
     showTab("visit");
   }
   function fillDetail(entry) {
@@ -2708,6 +2772,34 @@
     // archive の値なら Copernicus の表記も出す
     const archive = document.getElementById("weather-archive-credit-detail");
     if (archive) archive.classList.toggle("hidden", !(w && w.status === "ok" && w.basis === "archive"));
+    // 現地モードで作った記録にだけ「自動値を入れ直す」を出す
+    document.getElementById("autofill-redo").classList.toggle("hidden", !isPlainObject(entry.field));
+  }
+  // 「自動値を入れ直す」：参拝日・時間帯・天候のうち、空欄で手で直していない項目に自動の値を入れる（計画書 5章。リセットの後など）。
+  // 天候が取れていなければ取りに行く（取れたら、そのとき欄に入る）
+  async function redoAutoFill() {
+    const entry = entries.find(e => e.id === currentId);
+    if (!entry || !isPlainObject(entry.field)) return;
+    const now = new Date();
+    const fill = planAutoFill(entry, autoFillValuesFor(entry, readSettings().timebands), now);
+    for (const [key, value] of Object.entries(fill.visit)) editEntry(entry, "visit", key, value);
+    for (const [key, value] of Object.entries(fill.autoFill)) editEntry(entry, "autoFill", key, value);
+    const names = Object.keys(fill.visit).map(k => VISIT_META.find(m => m.id === k).label);
+    if (names.length) saveEntries();
+    fillDetail(entry);
+    const w = entry.field.weather;
+    const fetching = !(w && w.status === "ok") && ["current", "later"].includes(weatherPlan(entry, now));
+    const hint = document.getElementById("autofill-redo-hint");
+    const text = names.length ? `入れました：${names.join("・")}` : "入れられる項目はありません（空欄で、手で直していない項目にだけ入れます）";
+    hint.textContent = fetching ? `${text}。天候を取得しています…` : text;
+    if (!fetching) return;
+    await fetchWeather(entry.id, false);
+    if (currentId !== entry.id) return;
+    const after = entry.field.weather;
+    const result = after && after.status === "ok" ? (isAutoValue(entry, "v_weather") ? "天候も入れました" : "天候を取得しました（天候の欄は空欄ではないため、入れていません）")
+      : after && after.status === "pending" ? "天候は取得待ちです（通信できるときに取得します）"
+      : "天候は取得できませんでした（手入力できます）";
+    hint.textContent = `${text}。${result}`;
   }
 
   // =========================================================
@@ -2854,7 +2946,7 @@
   async function requestWeather(field) {
     const now = new Date();
     const loc = field.location;
-    const round = readSettings().roundLocationForApi !== false;
+    const round = readSettings().roundLocationForApi;
     const lat = roundCoordForApi(loc.lat, round), lon = roundCoordForApi(loc.lon, round);
     const visitAt = field.visitAt || field.startedAt;
     const at = Date.parse(visitAt || "");
@@ -3542,6 +3634,7 @@
     document.querySelectorAll("#settings-photo input").forEach(i => { i.checked = i.value === String(s.photoMaxEdge); });
     document.querySelectorAll("#settings-audio input").forEach(i => { i.checked = Number(i.value) === s.audioMaxSec; });
     document.querySelectorAll("#settings-timebands input").forEach(i => { i.value = s.timebands[i.dataset.timeband]; });
+    document.querySelector("#settings-round input").checked = s.roundLocationForApi;
     const hint = document.getElementById("settings-hint");
     hint.textContent = " ";
     hint.classList.remove("error");
@@ -3552,6 +3645,7 @@
     let patch;
     if (t.name === "photoMaxEdge") patch = { photoMaxEdge: t.value === "max" ? "max" : Number(t.value) };
     else if (t.name === "audioMaxSec") patch = { audioMaxSec: Number(t.value) };
+    else if (t.name === "roundLocationForApi") patch = { roundLocationForApi: t.checked };
     else if (t.dataset.timeband) {
       const timebands = {};
       document.querySelectorAll("#settings-timebands input").forEach(i => { timebands[i.dataset.timeband] = i.value; });
@@ -3801,6 +3895,9 @@
     }
     scheduleSave(400);
   }
+  document.getElementById("panel-visit").addEventListener("click", (e) => {
+    if (e.target.id === "btn-autofill-redo") redoAutoFill().catch(err => logError("autofill-redo", err));
+  });
   document.getElementById("panel-visit").addEventListener("input", handleVisitFieldChange);
   document.getElementById("panel-visit").addEventListener("change", handleVisitFieldChange);
 

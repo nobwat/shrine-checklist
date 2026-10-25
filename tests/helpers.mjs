@@ -39,7 +39,7 @@ const EXPORTS = [
   "manualLocation", "hasCoords", "locationAfterFailure", "isCoarseLocation", "locationText",
   "WEATHER_TIMEOUT_MS", "WEATHER_CURRENT_MAX_MS", "WEATHER_RETRY_GAP_MS", "WEATHER_PAST_DAYS_MAX", "WEATHER_PROVIDER",
   "weatherPastRequest", "weatherRetryTargets", "roundCoordForApi", "weatherLabel", "weatherText",
-  "isManualWeather", "weatherPlan", "weatherFailureStatus", "weatherAfterFailure", "weatherStatusText",
+  "isManualWeather", "summarizeWeather", "autoFillValuesFor", "weatherPlan", "weatherFailureStatus", "weatherAfterFailure", "weatherStatusText",
 ];
 
 // localStorage の代わり。quota（文字数の合計の上限）を超える setItem は例外にする
