@@ -139,6 +139,9 @@
   .weather-credit a { color: inherit; }
   .autofill-redo { margin: 0 0 1.2rem; }
   .autofill-redo .link-button { padding-left: 0; }
+  .field-item .info .memo-full { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-size: 0.78rem; }
+  .detail-media-status { font-size: 0.72rem; color: var(--sub); margin: 0 0 0.4rem; min-height: 0; }
+  .detail-media-status.error { color: #b5413a; }
   .autofill-redo-hint { font-size: 0.7rem; color: var(--sub); margin: 0.1rem 0 0; min-height: 1em; }
   .field-geo-text { font-size: 0.72rem; color: var(--sub); margin: 0; }
   .field-geo-text.warn { color: #b5413a; }
@@ -343,7 +346,7 @@
 
   @media print {
     .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
-    .load-error, .test-badge, .auto-badge, .autofill-redo, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
+    .load-error, .test-badge, .auto-badge, .autofill-redo, .detail-media, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -2610,7 +2613,9 @@
 
   function buildVisitHTML() {
     const metaHTML = `<div class="meta-grid">${VISIT_META.map(renderMetaField).join("")}</div>`
-      + `<div class="autofill-redo hidden" id="autofill-redo"><button class="link-button" id="btn-autofill-redo">自動値を入れ直す</button><p class="autofill-redo-hint" id="autofill-redo-hint"></p></div>`;
+      + `<div class="autofill-redo hidden" id="autofill-redo"><button class="link-button" id="btn-autofill-redo">自動値を入れ直す</button><p class="autofill-redo-hint" id="autofill-redo-hint"></p></div>`
+      + `<section class="detail-media hidden" id="detail-media"><p class="section-title">現地モードの記録</p>`
+      + `<p class="detail-media-status" id="detail-media-status"></p><div id="detail-media-items"></div></section>`;
     const sectionsHTML = VISIT_SECTIONS.map(sec => {
       const note = sec.note ? `<p class="section-note">${sec.note}</p>` : "";
       const checkFields = sec.fields.filter(f => f.type === "check" || f.type === "checknote");
@@ -2740,6 +2745,7 @@
   }
   function showList() {
     currentId = null;
+    releaseDetailUrls();
     showScreen("list");
     renderList();
     renderLastExport();
@@ -2753,6 +2759,7 @@
     document.getElementById("save-hint").textContent = " ";
     document.getElementById("autofill-redo-hint").textContent = "";
     showTab("visit");
+    renderDetailMedia(entry).catch(e => logError("detail-media", e));
   }
   function fillDetail(entry) {
     const name = document.getElementById("shrine-name");
@@ -3067,29 +3074,26 @@
     saveEntries();
   }
 
-  // ---------- 撮ったものの一覧 ----------
-  let fieldUrls = []; // サムネイルの object URL（描き直すときに解放する）
+  // ---------- 撮ったものの一覧（現地モードと、現地記録タブの「現地モードの記録」欄で使う） ----------
+  let fieldUrls = []; // 現地モードのサムネイル・録音の object URL（描き直すときに解放する）
   function releaseFieldUrls() {
     fieldUrls.forEach(u => URL.revokeObjectURL(u));
     fieldUrls = [];
   }
-  async function renderFieldItems() {
-    const visitId = fieldId;
-    const list = visitId ? await listMediaOfVisit(visitId) : [];
+  // 写真のサムネイルを読む。戻り値：写真の id → サムネイル（Blob）
+  async function loadThumbs(list) {
     const thumbs = new Map();
     for (const m of list) {
       if (m.type !== "photo") continue;
       const rec = await getMediaBlob(m.id);
       if (rec && rec.thumb) thumbs.set(m.id, rec.thumb);
     }
-    if (visitId !== fieldId) return; // 読んでいる間に別の下書きに切り替わった
-    releaseFieldUrls();
-    const box = document.getElementById("field-items");
-    box.innerHTML = "";
-    if (!list.length) {
-      box.innerHTML = `<p class="field-items-empty">まだ写真・録音・メモはありません。<br>下のボタンから残せます。</p>`;
-      return;
-    }
+    return thumbs;
+  }
+  // 一覧の行を作る（新しいものを上に）。list：メタ情報（連番の順）、urls：作った object URL を入れる配列。
+  // opt：{ status(text, isError), photo(m), memo(m), remove(m, title), fullMemo }。
+  //   photo・memo・remove が無ければ、その操作（タップ・×）は出さない。fullMemo ならメモを全文出す
+  function buildMediaRows(list, thumbs, urls, opt) {
     let photoNo = 0, audioNo = 0, memoNo = 0;
     const rows = list.map(m => {
       const row = document.createElement("div");
@@ -3104,7 +3108,7 @@
         if (thumb) {
           pic = document.createElement("img");
           const url = URL.createObjectURL(thumb);
-          fieldUrls.push(url);
+          urls.push(url);
           pic.src = url;
           pic.alt = title;
         } else {
@@ -3113,11 +3117,14 @@
           pic.textContent = "サムネイルなし";
         }
         row.appendChild(pic);
-        info.innerHTML = `${escapeHTML(title)}<span class="sub">${escapeHTML(photoLabelName(m.label) || "ラベルなし（タップで選ぶ）")}</span>`
+        const label = photoLabelName(m.label) || (opt.photo ? "ラベルなし（タップで選ぶ）" : "ラベルなし");
+        info.innerHTML = `${escapeHTML(title)}<span class="sub">${escapeHTML(label)}</span>`
           + `<span class="sub">${escapeHTML(photoSizeText(m))}</span>`
           + (m.exifStripped === false ? `<span class="exif">位置情報（EXIF）が残っています</span>` : "");
-        info.addEventListener("click", () => showLabelPanel(m.id, m.label));
-        pic.addEventListener("click", () => showLabelPanel(m.id, m.label));
+        if (opt.photo) {
+          info.addEventListener("click", () => opt.photo(m));
+          pic.addEventListener("click", () => opt.photo(m));
+        }
       } else if (m.type === "audio") {
         title = `録音${++audioNo}`;
         info.innerHTML = `${escapeHTML(title)}　${escapeHTML(formatDuration(m.durationSec))}`
@@ -3125,34 +3132,57 @@
         const play = document.createElement("button");
         play.className = "play";
         play.textContent = "▶ 再生";
-        play.addEventListener("click", () => playAudio(m.id, info, play).catch(e => logError("rec-play", e)));
+        play.addEventListener("click", () => playAudio(m.id, info, play, urls, opt.status).catch(e => logError("rec-play", e)));
         row.appendChild(info);
         row.appendChild(play);
       } else if (m.type === "memo") {
         title = `メモ${++memoNo}`;
-        info.innerHTML = `${escapeHTML(title)}<span class="sub">${escapeHTML(memoPreview(m.text) || "（空）")}</span><span class="sub">タップで書き直す</span>`;
-        info.addEventListener("click", () => openMemoEditor(m));
+        const text = opt.fullMemo ? (m.text || "") : memoPreview(m.text);
+        info.innerHTML = `${escapeHTML(title)}<span class="sub${opt.fullMemo ? " memo-full" : ""}">${escapeHTML(text || "（空）")}</span>`
+          + (opt.memo ? `<span class="sub">タップで書き直す</span>` : "");
+        if (opt.memo) info.addEventListener("click", () => opt.memo(m));
       } else {
         title = "その他";
         info.textContent = title;
       }
       if (!info.parentNode) row.appendChild(info);
-      const remove = document.createElement("button");
-      remove.className = "remove";
-      remove.textContent = "×";
-      remove.setAttribute("aria-label", `${title}を削除`);
-      remove.addEventListener("click", () => removeFieldItem(m, title).catch(e => logError("media-delete", e)));
-      row.appendChild(remove);
+      if (opt.remove) {
+        const remove = document.createElement("button");
+        remove.className = "remove";
+        remove.textContent = "×";
+        remove.setAttribute("aria-label", `${title}を削除`);
+        remove.addEventListener("click", () => opt.remove(m, title));
+        row.appendChild(remove);
+      }
       return row;
     });
-    rows.reverse().forEach(r => box.appendChild(r)); // 新しいものを上に
+    return rows.reverse();
   }
-  // 録音を再生する。押した行の下に再生の操作部品を出す
-  async function playAudio(id, info, button) {
+  async function renderFieldItems() {
+    const visitId = fieldId;
+    const list = visitId ? await listMediaOfVisit(visitId) : [];
+    const thumbs = await loadThumbs(list);
+    if (visitId !== fieldId) return; // 読んでいる間に別の下書きに切り替わった
+    releaseFieldUrls();
+    const box = document.getElementById("field-items");
+    box.innerHTML = "";
+    if (!list.length) {
+      box.innerHTML = `<p class="field-items-empty">まだ写真・録音・メモはありません。<br>下のボタンから残せます。</p>`;
+      return;
+    }
+    buildMediaRows(list, thumbs, fieldUrls, {
+      status: setFieldStatus,
+      photo: (m) => showLabelPanel(m.id, m.label),
+      memo: (m) => openMemoEditor(m),
+      remove: (m, title) => removeFieldItem(m, title).catch(e => logError("media-delete", e)),
+    }).forEach(r => box.appendChild(r));
+  }
+  // 録音を再生する。押した行の下に再生の操作部品を出す。status：見つからないときに知らせる先
+  async function playAudio(id, info, button, urls, status) {
     const stored = await getMediaBlob(id);
-    if (!stored || !stored.blob) { setFieldStatus("録音のデータが見つかりません", true); return; }
+    if (!stored || !stored.blob) { status("録音のデータが見つかりません", true); return; }
     const url = URL.createObjectURL(stored.blob);
-    fieldUrls.push(url);
+    urls.push(url);
     const audio = document.createElement("audio");
     audio.controls = true;
     audio.src = url;
@@ -3163,6 +3193,48 @@
     } catch (e) {
       // 自動で再生できない端末では、出した操作部品の ▶ を押してもらう
     }
+  }
+
+  // ---------- 現地記録タブの「現地モードの記録」欄（STEP 6） ----------
+  let detailUrls = [];     // この欄のサムネイル・録音の object URL（描き直す・一覧に戻るときに解放する）
+  let detailMediaSeq = 0;  // 読んでいる間に別の記録を開いたら、古い結果を捨てるための番号
+  function releaseDetailUrls() {
+    detailUrls.forEach(u => URL.revokeObjectURL(u));
+    detailUrls = [];
+  }
+  function setDetailMediaStatus(text, isError) {
+    const el = document.getElementById("detail-media-status");
+    el.textContent = text;
+    el.classList.toggle("error", !!isError);
+  }
+  // 現地モードで作った記録か、写真・録音・メモがある記録にだけ欄を出す
+  async function renderDetailMedia(entry) {
+    const seq = ++detailMediaSeq;
+    const section = document.getElementById("detail-media");
+    const box = document.getElementById("detail-media-items");
+    let list = [], thumbs = new Map(), failed = null;
+    try {
+      list = await listMediaOfVisit(entry.id);
+      thumbs = await loadThumbs(list);
+    } catch (e) {
+      failed = e; // IndexedDB が使えない端末でも、文字の記録はそのまま見られる
+    }
+    if (seq !== detailMediaSeq || currentId !== entry.id) return;
+    releaseDetailUrls();
+    box.innerHTML = "";
+    setDetailMediaStatus("");
+    const show = isPlainObject(entry.field) || list.length > 0;
+    section.classList.toggle("hidden", !show);
+    if (!show) return;
+    if (failed) {
+      setDetailMediaStatus(`写真・録音・メモを読み込めませんでした（${failed.message}）`, true);
+      return;
+    }
+    if (!list.length) {
+      box.innerHTML = `<p class="field-items-empty">写真・録音・メモはありません。</p>`;
+      return;
+    }
+    buildMediaRows(list, thumbs, detailUrls, { status: setDetailMediaStatus, fullMemo: true }).forEach(r => box.appendChild(r));
   }
   async function removeFieldItem(m, title) {
     if (!confirm(`${title}を削除します。元に戻せません。よろしいですか？`)) return;
