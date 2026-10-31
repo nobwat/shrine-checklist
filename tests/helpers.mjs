@@ -23,7 +23,7 @@ const CORE = [...CONSTS.map(constLine), between("// ==== data-core:start ====", 
 const EXPORTS = [
   ...CONSTS, "stamp", "isoLocal", "isPlainObject", "entryProblem", "validateEntries", "readStored", "applyChanges", "commitChanges",
   "readMeta", "listBackups", "makeBackup", "pruneBackups", "migrateEntries", "verifyMigration", "runMigration", "recordMigration",
-  "summarizeMedia", "deleteConfirmText",
+  "summarizeMedia", "deleteConfirmText", "mediaTypeCounts", "mediaBadgeText",
   "restoreBackup", "parseExportFile", "compareWithExport", "compareVerdict",
   "DRAFT_RESUME_MS", "newEntryId", "newDraftEntry", "findResumableDraft", "isEmptyDraft", "staleEmptyDraftIds",
   "PHOTO_LABELS", "photoLabelName", "PHOTO_MAX_EDGE_DEFAULT", "CANVAS_MAX_PIXELS", "THUMB_EDGE", "fitPhotoSize",

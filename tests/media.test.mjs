@@ -63,3 +63,30 @@ test("summarizeMedia: 記録が1件も無ければ、すべて孤立", () => {
   const { summarizeMedia } = loadCore();
   assert.equal(summarizeMedia([media("m1", "s_a", "photo"), media("m2", "s_b", "memo")], []).orphans, 2);
 });
+
+// ---------- 6-4 一覧のバッジ ----------
+
+test("mediaTypeCounts: 記録ごとに写真・録音・メモを数え、知らない種類は数えない", () => {
+  const { mediaTypeCounts } = loadCore();
+  const counts = mediaTypeCounts([
+    media("m1", "s_a", "photo"), media("m2", "s_a", "photo"), media("m3", "s_a", "audio"),
+    media("m4", "s_b", "memo"), media("m5", "s_b", "video"), media("m6", "s_c", "toString"),
+  ]);
+  assert.deepEqual(counts.get("s_a"), { photo: 2, audio: 1, memo: 0 });
+  assert.deepEqual(counts.get("s_b"), { photo: 0, audio: 0, memo: 1 });
+  assert.equal(counts.has("s_c"), false, "知らない種類だけの記録は載せない");
+  assert.equal(mediaTypeCounts([]).size, 0);
+});
+
+test("mediaBadgeText: 「写真N・音声M・メモK」の形。0 の種類は出さない", () => {
+  const { mediaBadgeText } = loadCore();
+  assert.equal(mediaBadgeText({ photo: 3, audio: 1, memo: 2 }), "写真3・音声1・メモ2");
+  assert.equal(mediaBadgeText({ photo: 3, audio: 0, memo: 2 }), "写真3・メモ2");
+  assert.equal(mediaBadgeText({ photo: 0, audio: 2, memo: 0 }), "音声2");
+});
+
+test("mediaBadgeText: どれも 0・件数が無い記録は空（バッジを出さない）", () => {
+  const { mediaBadgeText } = loadCore();
+  assert.equal(mediaBadgeText({ photo: 0, audio: 0, memo: 0 }), "");
+  assert.equal(mediaBadgeText(undefined), "");
+});

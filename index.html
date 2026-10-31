@@ -109,6 +109,11 @@
   }
   .add-button:active { background: rgba(138,109,61,0.08); }
   .shrine-card .tag.draft { color: #fff; background: #b5665a; border-color: #b5665a; }
+  .draft-bar { border: 1px solid #b5665a; border-radius: 8px; padding: 0.7rem; margin: 0 0 1rem; }
+  .draft-bar p { font-size: 0.75rem; color: var(--sub); margin: 0 0 0.5rem; }
+  .draft-bar button {
+    font-family: inherit; font-size: 0.85rem; color: #fff; background: #b5665a; border: none; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer;
+  }
   .auto-badge {
     display: inline-block; font-size: 0.62rem; color: #fff; background: var(--gold-line); border-radius: 999px;
     padding: 0 0.5rem; margin-left: 0.3rem; letter-spacing: 0.05em; vertical-align: middle;
@@ -359,7 +364,7 @@
 
   @media print {
     .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
-    .load-error, .test-badge, .auto-badge, .autofill-redo, .autocheck-undo, .detail-media, .memo-overlay, .photo-viewer, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
+    .load-error, .test-badge, .auto-badge, .autofill-redo, .autocheck-undo, .draft-bar, .detail-media, .memo-overlay, .photo-viewer, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -652,6 +657,10 @@
       <input id="shrine-name" type="text" placeholder="（記入してください）">
     </div>
     <p class="save-hint" id="save-hint">&nbsp;</p>
+    <div class="draft-bar hidden" id="draft-bar">
+      <p>この記録は現地モードの下書きです。内容を見直したら確定してください（確定すると、現地モードで続きから再開する対象ではなくなります）。</p>
+      <button id="btn-finalize">記録として確定</button>
+    </div>
 
     <div class="tab-nav">
       <button id="tab-btn-visit" class="active">① 現地記録</button>
@@ -797,7 +806,7 @@
   const ERRORLOG_KEY = "shrine-errorlog";
   const SETTINGS_KEY = "shrine-settings";
   const ERRORLOG_KEEP = 10;
-  const APP_VERSION = "2.0.0-dev.5";
+  const APP_VERSION = "2.0.0-dev.6";
   const IDB_NAME = "shrine-checklist"; // 写真・録音・メモ（計画書 3.3）
   const IDB_VERSION = 1;
   const IDB_OPEN_TIMEOUT_MS = 10000;   // 応答が無いまま止まるブラウザがあるため
@@ -1176,6 +1185,22 @@
       if (!ids.has(m.visitId)) orphans++;
     }
     return { total: mediaList.length, byType, orphans };
+  }
+  // 記録ごとの写真・録音・メモの件数（一覧のバッジ用）。戻り値：記録の id → { photo, audio, memo }
+  function mediaTypeCounts(mediaList) {
+    const map = new Map();
+    for (const m of mediaList) {
+      if (!["photo", "audio", "memo"].includes(m.type)) continue;
+      const c = map.get(m.visitId) || { photo: 0, audio: 0, memo: 0 };
+      c[m.type]++;
+      map.set(m.visitId, c);
+    }
+    return map;
+  }
+  // 一覧のバッジの文字「写真N・音声M・メモK」。0 の種類は出さない。どれも 0 なら ""
+  function mediaBadgeText(c) {
+    if (!c) return "";
+    return [c.photo && `写真${c.photo}`, c.audio && `音声${c.audio}`, c.memo && `メモ${c.memo}`].filter(Boolean).join("・");
   }
   // ---------- 現地モードの下書き（計画書 リスク20） ----------
   const DRAFT_RESUME_MS = 6 * 60 * 60 * 1000; // この時間内に始めた下書きは、続きから再開する
@@ -2268,6 +2293,10 @@
     return idbDone(tx);
   }
   // 記録ごとのメディアの件数（visitId → 件数）
+  async function mediaTypeCountsByVisit() {
+    const db = await openMediaDB();
+    return mediaTypeCounts(await idbRequest(db.transaction("media", "readonly").objectStore("media").getAll()));
+  }
   async function mediaCountsByVisit() {
     const db = await openMediaDB();
     const list = await idbRequest(db.transaction("media", "readonly").objectStore("media").getAll());
@@ -2744,6 +2773,8 @@
     const d = new Date(ts);
     return d.toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" });
   }
+  let listMediaCounts = new Map(); // 前に読んだ写真・録音・メモの件数（描き直すたびにちらつかないよう、まずこれで出す）
+  let listMediaSeq = 0;            // 読んでいる間に描き直したら、古い結果を捨てるための番号
   function renderList() {
     const list = document.getElementById("shrine-list");
     if (entries.length === 0) {
@@ -2758,16 +2789,36 @@
       const nameClass = e.name && e.name.trim() ? "name" : "name empty";
       const draftTag = e.status === "draft" ? `<span class="tag draft">下書き</span>` : "";
       const visitTag = hasVisitData(e) ? `<span class="tag">現地記録あり</span>` : "";
+      const mediaText = mediaBadgeText(listMediaCounts.get(e.id));
+      const mediaTag = `<span class="tag${mediaText ? "" : " hidden"}" data-media-for="${escapeHTML(e.id)}">${escapeHTML(mediaText)}</span>`;
       return `
         <button class="shrine-card" data-id="${escapeHTML(e.id)}">
           <div class="${nameClass}">${escapeHTML(name)}</div>
-          <div class="tags">${draftTag}${visitTag}</div>
+          <div class="tags">${draftTag}${visitTag}${mediaTag}</div>
           <div class="meta"><span>チェックリスト ${checked} / ${total}</span><span>更新: ${formatDate(e.updatedAt)}</span></div>
           <div class="progress-bar"><span style="width:${pct}%"></span></div>
         </button>`;
     }).join("");
     list.querySelectorAll(".shrine-card").forEach(btn => {
       btn.addEventListener("click", () => openDetail(btn.dataset.id));
+    });
+    renderListMediaTags().catch(e => logError("list-media", e));
+  }
+  // 写真・録音・メモの件数を IndexedDB から読み直して、一覧のバッジを入れ替える（読めない端末ではバッジを出さない）
+  async function renderListMediaTags() {
+    const seq = ++listMediaSeq;
+    let counts;
+    try {
+      counts = await mediaTypeCountsByVisit();
+    } catch (e) {
+      counts = new Map();
+    }
+    if (seq !== listMediaSeq) return;
+    listMediaCounts = counts;
+    document.querySelectorAll("#shrine-list [data-media-for]").forEach(tag => {
+      const text = mediaBadgeText(counts.get(tag.dataset.mediaFor));
+      tag.textContent = text;
+      tag.classList.toggle("hidden", !text);
     });
   }
   function escapeHTML(s) {
@@ -2817,6 +2868,18 @@
     applyChecksToDOM(entry.checks || {});
     renderAutoBadges(entry);
     renderAutoCheckUndo(entry);
+    document.getElementById("draft-bar").classList.toggle("hidden", entry.status !== "draft");
+  }
+  // 下書きを記録として確定する。神社名が空でも確定できる（一言確認する）。下書きに戻す機能は無い
+  function finalizeDraft() {
+    const entry = entries.find(e => e.id === currentId);
+    if (!entry || entry.status !== "draft") return;
+    if (!(typeof entry.name === "string" && entry.name.trim())
+      && !confirm("神社名が空のまま確定します。神社名はあとからでも入れられます。よろしいですか？")) return;
+    editEntry(entry, "status", undefined, "final");
+    saveEntries();
+    fillDetail(entry);
+    document.getElementById("save-hint").textContent = "記録として確定しました";
   }
   function renderAutoBadges(entry) {
     document.querySelectorAll("#panel-visit [data-auto-for]").forEach(b => {
@@ -4072,6 +4135,7 @@
     openDetail(entry.id);
   });
   document.getElementById("btn-back").addEventListener("click", showList);
+  document.getElementById("btn-finalize").addEventListener("click", finalizeDraft);
   document.getElementById("btn-print").addEventListener("click", () => window.print());
   document.getElementById("btn-reset").addEventListener("click", () => {
     if (!currentId) return;
