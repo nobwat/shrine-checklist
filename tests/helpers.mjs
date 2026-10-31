@@ -34,7 +34,7 @@ const EXPORTS = [
   "MEMO_SAVE_DELAY_MS", "textByteSize", "newMemoMeta", "memoPreview",
   "PHOTO_MAX_EDGE_CHOICES", "normalizeSettings", "readSettings", "writeSettings", "storageWarning",
   "TIMEBANDS_DEFAULT", "TIMEBAND_LABELS", "parseHHMM", "timebandsProblem", "timebandOf",
-  "AUTO_FILL_KEYS", "planAutoFill", "isAutoValue",
+  "AUTO_FILL_KEYS", "planAutoFill", "isAutoValue", "planAutoCheck", "autoChecksToUndo", "autoCheckName",
   "GEO_OPTIONS", "GEO_APP_TIMEOUT_MS", "GEO_COARSE_M", "geoErrorStatus", "locationFromPosition", "parseManualLocation",
   "manualLocation", "hasCoords", "locationAfterFailure", "isCoarseLocation", "locationText",
   "WEATHER_TIMEOUT_MS", "WEATHER_CURRENT_MAX_MS", "WEATHER_RETRY_GAP_MS", "WEATHER_PAST_DAYS_MAX", "WEATHER_PROVIDER",

@@ -139,6 +139,8 @@
   .weather-credit a { color: inherit; }
   .autofill-redo { margin: 0 0 1.2rem; }
   .autofill-redo .link-button { padding-left: 0; }
+  .autocheck-undo { margin: 0 0 1.2rem; }
+  .autocheck-undo .link-button { padding-left: 0; }
   .field-item .info .memo-full { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-size: 0.78rem; }
   .detail-media-status { font-size: 0.72rem; color: var(--sub); margin: 0 0 0.4rem; min-height: 0; }
   .detail-media-status.error { color: #b5413a; }
@@ -357,7 +359,7 @@
 
   @media print {
     .toolbar, #screen-list, .save-hint, .storage-warning, .tab-nav,
-    .load-error, .test-badge, .auto-badge, .autofill-redo, .detail-media, .memo-overlay, .photo-viewer, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
+    .load-error, .test-badge, .auto-badge, .autofill-redo, .autocheck-undo, .detail-media, .memo-overlay, .photo-viewer, #screen-diag, #screen-guide, #screen-field, #screen-settings, .modal { display: none !important; }
     #screen-detail .tab-panel.hidden { display: block !important; }
     body { background: #fff; }
     .wrap { padding: 0.5rem; max-width: 100%; }
@@ -911,6 +913,7 @@
   //   { op: "set", id, field, key, value }（key が無ければ field そのものを value にする）
   //   { op: "replace", id, field, value }（タブのリセットなど、field を丸ごと置き換える）
   //   { op: "unset", id, field }（field を記録から取り除く。リセットで autoFill などを消すとき）
+  //   { op: "unset", id, field, key }（field の中の key だけを取り除く。autoChecks から1項目を外すとき）
   // 他の画面で削除された記録への変更は捨てる（削除を優先する）
   function applyChanges(list, changes) {
     for (const c of changes) {
@@ -925,6 +928,8 @@
         list.splice(i, 1);
       } else if (c.op === "replace") {
         e[c.field] = JSON.parse(JSON.stringify(c.value));
+      } else if (c.op === "unset" && c.key !== undefined) {
+        if (isPlainObject(e[c.field])) delete e[c.field][c.key];
       } else if (c.op === "unset") {
         delete e[c.field];
       } else if (c.op === "set" && c.key === undefined) {
@@ -1693,6 +1698,26 @@
   function isAutoValue(entry, key) {
     const a = entry.autoFill && entry.autoFill[key];
     return !!a && a.state === "auto" && entry.visit && entry.visit[key] === a.value;
+  }
+
+  // ---------- 写真ラベルからの自動チェック（計画書 3.4） ----------
+  // ラベルを付けたときに自動で付けるチェック。対応先が無いラベル（手水舎・御朱印）や、既にチェックが付いていれば null
+  // （手で付けたチェックは autoChecks に入れず、取り消しの対象にしない）。戻り値：{ check, autoCheck: { mediaId, at } }
+  function planAutoCheck(entry, labelKey, mediaId, now) {
+    const l = PHOTO_LABELS.find(x => x.key === labelKey);
+    if (!l || !l.check) return null;
+    if (entry.visit && entry.visit[l.check]) return null;
+    return { check: l.check, autoCheck: { mediaId, at: isoLocal(now) } };
+  }
+  // 「自動チェックを取り消す」で外すチェック：autoChecks にあって、今もチェックが付いているもの（ラベル表の順）
+  function autoChecksToUndo(entry) {
+    const a = isPlainObject(entry.autoChecks) ? entry.autoChecks : {};
+    return PHOTO_LABELS.filter(l => l.check && a[l.check] && entry.visit && entry.visit[l.check]).map(l => l.check);
+  }
+  // チェックの短い名前（ラベルの表示名）。知らないチェックは null
+  function autoCheckName(check) {
+    const l = PHOTO_LABELS.find(x => x.check === check);
+    return l ? l.name : null;
   }
 
   // ---------- 設定（shrine-settings。計画書 3.5） ----------
@@ -2637,7 +2662,8 @@
       + `<div class="autofill-redo hidden" id="autofill-redo"><button class="link-button" id="btn-autofill-redo">自動値を入れ直す</button><p class="autofill-redo-hint" id="autofill-redo-hint"></p></div>`
       + `<section class="detail-media hidden" id="detail-media"><p class="section-title">現地モードの記録</p>`
       + `<p class="section-note">写真をタップすると大きく表示して、ラベルを選べます。メモはタップで書き直せます。</p>`
-      + `<p class="detail-media-status" id="detail-media-status"></p><div id="detail-media-items"></div></section>`;
+      + `<p class="detail-media-status" id="detail-media-status"></p><div id="detail-media-items"></div></section>`
+      + `<div class="autocheck-undo hidden" id="autocheck-undo"><button class="link-button" id="btn-autocheck-undo">自動チェックを取り消す</button><p class="autofill-redo-hint" id="autocheck-undo-hint"></p></div>`;
     const sectionsHTML = VISIT_SECTIONS.map(sec => {
       const note = sec.note ? `<p class="section-note">${sec.note}</p>` : "";
       const checkFields = sec.fields.filter(f => f.type === "check" || f.type === "checknote");
@@ -2780,6 +2806,7 @@
     fillDetail(entry);
     document.getElementById("save-hint").textContent = " ";
     document.getElementById("autofill-redo-hint").textContent = "";
+    renderAutoCheckUndo(entry, "");
     showTab("visit");
     renderDetailMedia(entry).catch(e => logError("detail-media", e));
   }
@@ -2789,6 +2816,7 @@
     applyVisitToDOM(entry.visit || {});
     applyChecksToDOM(entry.checks || {});
     renderAutoBadges(entry);
+    renderAutoCheckUndo(entry);
   }
   function renderAutoBadges(entry) {
     document.querySelectorAll("#panel-visit [data-auto-for]").forEach(b => {
@@ -2829,6 +2857,53 @@
       : after && after.status === "pending" ? "天候は取得待ちです（通信できるときに取得します）"
       : "天候は取得できませんでした（手入力できます）";
     hint.textContent = `${text}。${result}`;
+  }
+
+  // ---------- 写真ラベルからの自動チェック（STEP 6-3。計画書 3.4） ----------
+  let autoCheckNotice = ""; // 取り消したあとの知らせ（別の記録を開くまで出す）
+  // 「自動チェックを取り消す」の欄。自動で付けたチェックが残っているときだけボタンを出す。notice を渡したら知らせを入れ替える
+  function renderAutoCheckUndo(entry, notice) {
+    if (notice !== undefined) autoCheckNotice = notice;
+    const targets = autoChecksToUndo(entry);
+    document.getElementById("btn-autocheck-undo").classList.toggle("hidden", !targets.length);
+    document.getElementById("autocheck-undo-hint").textContent = targets.length
+      ? `写真のラベルから自動で付けたチェック：${targets.map(autoCheckName).join("・")}（手で付けたチェックは外しません）`
+      : autoCheckNotice;
+    document.getElementById("autocheck-undo").classList.toggle("hidden", !targets.length && !autoCheckNotice);
+  }
+  // ラベルを付けた写真の記録に、対応するチェックを付ける（現地モードの撮影直後・一覧、現地記録タブの全画面表示から）。
+  // 付けたらそのチェックの名前、付けなければ null。ラベルを外したり変えたりしても、付いたチェックは外さない
+  function applyAutoCheck(visitId, labelKey, mediaId) {
+    const entry = entries.find(e => e.id === visitId);
+    if (!entry || !labelKey) return null;
+    const plan = planAutoCheck(entry, labelKey, mediaId, new Date());
+    if (!plan) return null;
+    editEntry(entry, "visit", plan.check, true);
+    editEntry(entry, "autoChecks", plan.check, plan.autoCheck);
+    saveEntries();
+    if (currentId === visitId) {
+      applyVisitToDOM(entry.visit);
+      renderAutoCheckUndo(entry);
+    }
+    return autoCheckName(plan.check);
+  }
+  // 自動で付けたチェックだけをまとめて外す（手で付けた・手で付け直したチェックは autoChecks に無いので残る）
+  function undoAutoChecks() {
+    const entry = entries.find(e => e.id === currentId);
+    if (!entry) return;
+    const targets = autoChecksToUndo(entry);
+    if (!targets.length) return;
+    const names = targets.map(autoCheckName).join("・");
+    if (!confirm(`写真のラベルから自動で付けたチェック（${names}）を外します。\n手で付けたチェックは残ります。よろしいですか？`)) return;
+    for (const key of targets) editEntry(entry, "visit", key, false);
+    // 1項目ずつ取り除く（丸ごと消すと、別の画面で同時に付いた自動チェックの記録まで消してしまうため）
+    for (const key of Object.keys(entry.autoChecks)) {
+      delete entry.autoChecks[key];
+      recordChange({ op: "unset", id: entry.id, field: "autoChecks", key });
+    }
+    saveEntries();
+    applyVisitToDOM(entry.visit);
+    renderAutoCheckUndo(entry, `外しました：${names}`);
   }
 
   // =========================================================
@@ -3336,9 +3411,10 @@
       return;
     }
     v.media = { ...v.media, label: key };
+    const checked = applyAutoCheck(v.media.visitId, key, v.media.id);
     if (viewer === v) {
       renderViewerLabels();
-      setViewerStatus(key ? `ラベル「${photoLabelName(key)}」を付けました` : "ラベルを外しました");
+      setViewerStatus(key ? `ラベル「${photoLabelName(key)}」を付けました${checked ? `。チェック「${checked}」も付けました` : ""}` : "ラベルを外しました");
     }
     await refreshDetailMedia(v.media.visitId, "");
   }
@@ -3498,7 +3574,8 @@
   async function setPhotoLabel(mediaId, key) {
     await updateMediaMeta(mediaId, { label: key });
     if (labelTarget === mediaId) hideLabelPanel();
-    setFieldStatus(`ラベル「${photoLabelName(key)}」を付けました`);
+    const checked = applyAutoCheck(fieldId, key, mediaId);
+    setFieldStatus(`ラベル「${photoLabelName(key)}」を付けました${checked ? `。チェック「${checked}」も付けました` : ""}`);
     await renderFieldItems();
   }
 
@@ -4014,6 +4091,7 @@
         recordChange({ op: "unset", id: entry.id, field: f });
       }
       applyVisitToDOM(entry.visit);
+      renderAutoCheckUndo(entry, "");
     } else {
       applyChecksToDOM(entry.checks);
     }
@@ -4076,6 +4154,12 @@
       editEntry(entry, "visit", id, el.checked);
       const li = el.closest("li");
       if (li) li.classList.toggle("checked", el.checked);
+      // 自動で付いたチェックを手で操作したら、以後は手動扱い（取り消しの対象から外す）
+      if (isPlainObject(entry.autoChecks) && entry.autoChecks[id]) {
+        delete entry.autoChecks[id];
+        recordChange({ op: "unset", id: entry.id, field: "autoChecks", key: id });
+        renderAutoCheckUndo(entry);
+      }
     } else {
       editEntry(entry, "visit", id, el.value);
     }
@@ -4089,6 +4173,7 @@
   }
   document.getElementById("panel-visit").addEventListener("click", (e) => {
     if (e.target.id === "btn-autofill-redo") redoAutoFill().catch(err => logError("autofill-redo", err));
+    if (e.target.id === "btn-autocheck-undo") undoAutoChecks();
   });
   document.getElementById("panel-visit").addEventListener("input", handleVisitFieldChange);
   document.getElementById("panel-visit").addEventListener("change", handleVisitFieldChange);
