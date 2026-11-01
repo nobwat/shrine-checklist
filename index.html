@@ -416,7 +416,9 @@
         <button class="pill-button" id="btn-export">全データ書き出し</button>
         <button class="pill-button" id="btn-import">JSONから読み込み</button>
         <button class="pill-button" id="btn-export-zip">全件をzipで書き出し</button>
+        <button class="pill-button" id="btn-restore-zip">zipから復元</button>
       </div>
+      <input type="file" id="restore-zip-file" accept=".zip,application/zip" class="hidden">
       <p class="data-tools-note">JSON には文字の記録だけが入ります。写真・録音・メモまで残すときは zip で書き出してください。</p>
       <div class="zip-bar hidden" id="list-zip-bar">
         <p class="zip-text" id="list-zip-text"></p>
@@ -1967,6 +1969,73 @@
       count: list.length,
     };
   }
+  // ---------- zip からの復元（STEP 7-3） ----------
+  // zip の manifest.json を読む。1神社の zip も全件の zip も読める。
+  // 戻り値：{ ok: true, manifest, visits: [{ folder, path }] }（folder：zip の中のフォルダ。"" か「フォルダ名/」）または { ok: false, error }
+  function parseZipManifest(text) {
+    let m;
+    try { m = JSON.parse(text); } catch (e) { m = null; }
+    if (!isPlainObject(m) || m.format !== ZIP_FORMAT) return { ok: false, error: "このアプリで作った zip ではありません（manifest.json が読めません）。" };
+    if (!Number.isInteger(m.formatVersion) || m.formatVersion < 1) return { ok: false, error: "zip の形式の版（formatVersion）が読めません。" };
+    if (m.formatVersion > 1) return { ok: false, error: "この zip は新しいバージョンのアプリで作られています。アプリを最新にしてから復元してください。" };
+    if (m.kind === "visit") return { ok: true, manifest: m, visits: [{ folder: "", path: "visit.json" }] };
+    if (m.kind !== "all") return { ok: false, error: "zip の種類（kind）が読めません。" };
+    if (!Array.isArray(m.folders) || !m.folders.every(f => isPlainObject(f) && typeof f.folder === "string" && f.folder)) {
+      return { ok: false, error: "zip の中の神社ごとのフォルダの一覧が読めません。" };
+    }
+    return { ok: true, manifest: m, visits: m.folders.map(f => ({ folder: `${f.folder}/`, path: `${f.folder}/visit.json` })) };
+  }
+  // visit.json を読む。写真・録音は zip の中の名前（path）と組にする。メタ情報の visitId は記録の id にそろえ、zip 用の file は取り除く。
+  // 形の正しくない写真・録音・メモは入れずに数える（skipped）。
+  // 戻り値：{ ok: true, entry, media: [{ meta, path }], skipped } または { ok: false, error }
+  function parseVisitJson(text, folder) {
+    let v;
+    try { v = JSON.parse(text); } catch (e) { v = null; }
+    if (!isPlainObject(v) || v.format !== "shrine-checklist-visit") return { ok: false, error: `${folder}visit.json が読めません` };
+    if (!Number.isInteger(v.formatVersion) || v.formatVersion < 1 || v.formatVersion > 1) return { ok: false, error: `${folder}visit.json の形式の版が読めません` };
+    const problem = entryProblem(v.entry);
+    if (problem) return { ok: false, error: `${folder}visit.json の記録の形式が正しくありません（${problem}）` };
+    const media = [];
+    let skipped = 0;
+    for (const m of Array.isArray(v.media) ? v.media : []) {
+      const okBase = isPlainObject(m) && typeof m.id === "string" && m.id && ["photo", "audio", "memo"].includes(m.type);
+      const needsFile = okBase && m.type !== "memo";
+      if (!okBase || (needsFile && (typeof m.file !== "string" || !m.file))) { skipped++; continue; }
+      const meta = { ...m, visitId: v.entry.id };
+      delete meta.file;
+      media.push({ meta, path: needsFile ? folder + m.file : null });
+    }
+    return { ok: true, entry: v.entry, media, skipped };
+  }
+  // 復元の計画。visits：parseVisitJson の結果、currentIds：今の記録の id、localMedia：この端末のメディア（メタ情報）。
+  // 同じ記録が zip に2回あれば最初のものを使う。localOnly：上書きを選ぶと消える、この端末にだけあるメディアの数。
+  // 戻り値：{ fresh, dup, localOnly }
+  function planZipRestore(visits, currentIds, localMedia) {
+    const seen = new Set();
+    const unique = visits.filter(v => !seen.has(v.entry.id) && seen.add(v.entry.id));
+    const fresh = unique.filter(v => !currentIds.has(v.entry.id));
+    const dup = unique.filter(v => currentIds.has(v.entry.id));
+    const dupIds = new Set(dup.map(v => v.entry.id));
+    const inZip = new Set(dup.flatMap(v => v.media.map(x => x.meta.id)));
+    const localOnly = localMedia.filter(m => dupIds.has(m.visitId) && !inZip.has(m.id)).length;
+    return { fresh, dup, localOnly };
+  }
+  // 復元の確認に出す文
+  function zipRestoreSummary(plan) {
+    const n = plan.fresh.length + plan.dup.length;
+    let text = `zip の記録：${n}件\n新規 ${plan.fresh.length}件・重複 ${plan.dup.length}件`;
+    if (plan.dup.length) {
+      text += "\n\n重複した記録（同じ記録の別の版）をどうしますか？\n上書きすると、その記録の文字と写真・録音・メモを zip の中身に置き換えます。";
+      if (plan.localOnly) text += `\nこの端末にだけある写真・録音・メモ${plan.localOnly}件は消えます。`;
+    } else {
+      text += "\n\n復元しますか？";
+    }
+    return text;
+  }
+  // 記録を書き込む変更（applyChanges の形）。上書きは、消してから zip の記録を足す
+  function zipRestoreChanges(visits, currentIds) {
+    return visits.flatMap(v => (currentIds.has(v.entry.id) ? [{ op: "delete", id: v.entry.id }] : []).concat({ op: "add", entry: v.entry }));
+  }
   // JSZip に中身を入れる。readData(mediaId)：本体（ブラウザでは Blob）。写真・音声は無圧縮（STORE）、JSON・テキストは圧縮（DEFLATE）
   async function fillZip(zip, files, readData) {
     for (const f of files) {
@@ -2377,6 +2446,146 @@
       .catch(e => { logError("zip-share", e); setZipText(where, `共有／保存できませんでした（${e.message}）`, true); });
   }
 
+  // ---------- zip からの復元（STEP 7-3） ----------
+  let zipRestoring = false;
+  // 写真のサムネイルを作り直す（zip にはサムネイルを入れていないため）。読めない写真は null（一覧では「サムネイルなし」）
+  async function makeThumb(blob) {
+    const img = await decodeImage(blob);
+    if (!img) return null;
+    try {
+      const t = fitPhotoSize(img.width, img.height, THUMB_EDGE);
+      return await drawToJpeg(img.source, t.width, t.height, 0.7);
+    } catch (e) {
+      logError("thumb", e);
+      return null;
+    } finally {
+      img.release();
+    }
+  }
+  // zip の写真・録音の本体と、メモを書く形にそろえる。zip に本体が無いものは入れずに数える
+  async function zipRestoreItems(zip, visit, onEach) {
+    const items = [];
+    let missing = 0;
+    for (const { meta, path } of visit.media) {
+      if (!path) { items.push({ meta }); continue; }
+      const f = zip.file(path);
+      if (!f) { missing++; continue; }
+      if (onEach) onEach();
+      const blob = new Blob([await f.async("arraybuffer")], { type: meta.mimeType || "application/octet-stream" });
+      const thumb = meta.type === "photo" ? await makeThumb(blob) : null;
+      items.push({ meta, blob, thumb });
+    }
+    return { items, missing };
+  }
+  // 順番：zip を検査 → 新規・重複を数えて選んでもらう → 写真などを IndexedDB に書く（記録ごと）→ 書けた記録だけを localStorage に書く
+  async function restoreFromZip(file) {
+    if (!storageOK) { alert("このブラウザでは保存機能が使えないため、復元できません。"); return; }
+    if (loadFailure) { alert("今のデータを読み込めていないため、復元はできません。先に「生データを書き出す」で保管してください。"); return; }
+    if (zipRestoring) return;
+    zipRestoring = true;
+    const status = (text, isError) => setZipText("list", text, isError);
+    try {
+      openZipBar("list", "zip を読み込んでいます…");
+      const JSZip = await loadJSZip();
+      let zip;
+      try {
+        zip = await JSZip.loadAsync(file);
+      } catch (e) {
+        status("zip ファイルとして読めませんでした。", true);
+        return;
+      }
+      const mf = zip.file("manifest.json");
+      const parsed = parseZipManifest(mf ? await mf.async("string") : "");
+      if (!parsed.ok) { status(parsed.error, true); return; }
+      const visits = [];
+      let skipped = 0;
+      for (const v of parsed.visits) {
+        const vf = zip.file(v.path);
+        const r = parseVisitJson(vf ? await vf.async("string") : "", v.folder);
+        if (!r.ok) { status(`復元できませんでした：${r.error}。何も変更していません。`, true); return; }
+        visits.push(r);
+        skipped += r.skipped;
+      }
+      if (!visits.length) { status("zip に記録が入っていません。", true); return; }
+
+      flushPendingSave();
+      const stored = readStored();
+      if (!stored.ok) { status("今の記録データを読み込めませんでした。画面を開き直してください。", true); return; }
+      const currentIds = new Set(stored.list.map(e => e.id));
+      const db = await openMediaDB();
+      const localMedia = await idbRequest(db.transaction("media", "readonly").objectStore("media").getAll());
+      const plan = planZipRestore(visits, currentIds, localMedia);
+      const choice = plan.dup.length
+        ? await choose(zipRestoreSummary(plan), [
+            { label: "スキップ（今の記録を残す）", value: "skip", primary: true },
+            { label: "上書き（zip の内容にする）", value: "overwrite" },
+            { label: "やめる", value: "cancel" },
+          ])
+        : await choose(zipRestoreSummary(plan), [
+            { label: "復元する", value: "skip", primary: true },
+            { label: "やめる", value: "cancel" },
+          ]);
+      if (choice === "cancel") { status("復元をやめました。何も変更していません。"); return; }
+      const targets = choice === "overwrite" ? [...plan.fresh, ...plan.dup] : plan.fresh;
+      if (!targets.length) { status("新しく足す記録はありませんでした（重複はスキップしました）。何も変更していません。"); return; }
+
+      // 写真などを先に書く（記録ごとに1つのトランザクション）。書けなかった記録は、文字の記録も書かない
+      const done = [], failed = [];
+      let missing = 0, count = 0;
+      const total = targets.reduce((n, v) => n + v.media.filter(x => x.path).length, 0);
+      for (const v of targets) {
+        try {
+          const r = await zipRestoreItems(zip, v, () => status(`写真・録音を復元しています… ${++count} / ${total}`));
+          missing += r.missing;
+          await replaceMediaOfVisit(v.entry.id, r.items);
+          done.push(v);
+        } catch (e) {
+          logError("zip-restore-media", e);
+          failed.push(v.entry.name || "名称未設定");
+        }
+      }
+      if (!done.length) { status(`写真などを書き込めなかったため、復元できませんでした（${failed.join("・")}）。今の記録は変更していません。`, true); return; }
+
+      // 文字の記録を書く前に、今の状態を丸ごと残す（JSON の読み込みと同じ）
+      flushPendingSave();
+      const before = readStored();
+      let backupKey = null;
+      try {
+        if (!before.ok) throw new Error("今の記録データを読み込めません");
+        if (before.raw) backupKey = makeBackup(before.raw);
+        const result = commitChanges(zipRestoreChanges(done, new Set(before.list.map(e => e.id))), lastRaw);
+        if (!result.ok) throw new Error("今の記録データを読み込めません");
+      } catch (e) {
+        logError("zip-restore", e);
+        status("写真などは書き込みましたが、記録を保存できませんでした（保存容量が一杯の可能性があります）。今の記録は変更していません。"
+          + "書き込んだ写真などは、診断画面に「どの記録にも属さないメディア」として出ることがあります。", true);
+        return;
+      }
+      try { pruneBackups(); } catch (e) { logError("prune", e); }
+      entries = loadEntries();
+      renderList();
+      const freshIds = new Set(plan.fresh.map(v => v.entry.id));
+      const nFresh = done.filter(v => freshIds.has(v.entry.id)).length;
+      const nOver = done.length - nFresh;
+      const parts = [`新規${nFresh}件`];
+      if (nOver) parts.push(`上書き${nOver}件`);
+      if (choice === "skip" && plan.dup.length) parts.push(`重複${plan.dup.length}件はスキップ`);
+      let text = `復元しました：${parts.join("・")}。`;
+      if (failed.length) text += `写真などを書き込めなかった記録（${failed.join("・")}）は復元していません。`;
+      if (missing || skipped) text += `zip の中に見つからない、または形の正しくない写真・録音・メモ${missing + skipped}件は入れていません。`;
+      if (backupKey) text += "（復元前の状態は診断画面のバックアップ一覧に残っています）";
+      // 復元している間に別の画面へ移っていたら、枠が見えないので知らせを出す
+      if (zipEl("list", "zip-bar").classList.contains("hidden")) alert(text);
+      openZipBar("list", "");
+      status(text, !!(failed.length || missing || skipped));
+    } catch (e) {
+      logError("zip-restore", e);
+      status(`復元できませんでした（${e.message}）`, true);
+    } finally {
+      zipRestoring = false;
+    }
+  }
+
   // ---------- 選択ダイアログ ----------
   // buttons: [{ label, value, primary }]。選ばれた value を返す
   function choose(text, buttons) {
@@ -2614,11 +2823,38 @@
     keys.onsuccess = () => keys.result.forEach(k => chunks.delete(k));
     return idbDone(tx);
   }
-  // 記録ごとのメディアの件数（visitId → 件数）
+  // zip からの復元（7-3）：1つの記録のメディアを、items（{ meta, blob, thumb }。メモは blob なし）に置き換える。
+  // 今あるもの（メタ情報・本体・録音途中のチャンク）を消して書くまでを1つのトランザクションで行う（途中で失敗したら何も変わらない）
+  async function replaceMediaOfVisit(visitId, items) {
+    const db = await openMediaDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(["media", "blobs", "recChunks"], "readwrite");
+      const media = tx.objectStore("media");
+      const blobs = tx.objectStore("blobs");
+      const chunks = tx.objectStore("recChunks");
+      const req = media.index("visitId").getAllKeys(visitId);
+      req.onsuccess = () => {
+        for (const id of req.result) {
+          media.delete(id);
+          blobs.delete(id);
+          const keys = chunks.index("recId").getAllKeys(id);
+          keys.onsuccess = () => keys.result.forEach(k => chunks.delete(k));
+        }
+        for (const it of items) {
+          media.put(it.meta);
+          if (it.blob) blobs.put({ id: it.meta.id, blob: it.blob, thumb: it.thumb || null });
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB に書けませんでした"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB への書き込みが中断されました"));
+    });
+  }
   async function mediaTypeCountsByVisit() {
     const db = await openMediaDB();
     return mediaTypeCounts(await idbRequest(db.transaction("media", "readonly").objectStore("media").getAll()));
   }
+  // 記録ごとのメディアの件数（visitId → 件数）
   async function mediaCountsByVisit() {
     const db = await openMediaDB();
     const list = await idbRequest(db.transaction("media", "readonly").objectStore("media").getAll());
@@ -4462,6 +4698,12 @@
   document.getElementById("btn-finalize").addEventListener("click", finalizeDraft);
   document.getElementById("btn-zip").addEventListener("click", () => createVisitZip().catch(e => logError("zip", e)));
   document.getElementById("btn-export-zip").addEventListener("click", () => createAllZip().catch(e => logError("zip-all", e)));
+  document.getElementById("btn-restore-zip").addEventListener("click", () => document.getElementById("restore-zip-file").click());
+  document.getElementById("restore-zip-file").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    e.target.value = ""; // 同じファイルをもう一度選べるようにする
+    if (file) restoreFromZip(file).catch(err => logError("zip-restore", err));
+  });
   for (const w of ["detail", "list"]) {
     zipEl(w, "btn-zip-share").addEventListener("click", () => deliverZip("auto"));
     zipEl(w, "btn-zip-download").addEventListener("click", () => deliverZip("download"));
