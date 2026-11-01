@@ -292,6 +292,7 @@
   .data-tools-title { font-size: 0.8rem; color: var(--gold); letter-spacing: 0.08em; margin: 0 0 0.8rem; }
   .data-tools-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 0.6rem; }
   .data-tools-note { font-size: 0.7rem; color: var(--sub); margin: 0.6rem 0 0.2rem; min-height: 1em; }
+  .data-tools-note.backup-remind { color: #b5413a; margin-top: 0; }
   .data-tools-warning { font-size: 0.74rem; color: #b5413a; margin: 0.4rem 0; }
   .app-version { text-align: center; font-size: 0.7rem; color: var(--sub); margin-top: 1.4rem; }
   .diag-output {
@@ -429,6 +430,8 @@
           <button class="link-button" id="list-btn-zip-close">閉じる</button>
         </div>
       </div>
+      <p class="data-tools-note" id="last-backup">&nbsp;</p>
+      <p class="data-tools-note backup-remind hidden" id="backup-remind">前回のバックアップから30日以上たっています</p>
       <p class="data-tools-note" id="last-export">&nbsp;</p>
       <p class="data-tools-warning hidden" id="unsaved-warning">保存できていない編集があります（保存容量が一杯の可能性があります）。書き出しには、保存済みの内容だけが入ります。</p>
       <div>
@@ -836,7 +839,7 @@
   const ERRORLOG_KEY = "shrine-errorlog";
   const SETTINGS_KEY = "shrine-settings";
   const ERRORLOG_KEEP = 10;
-  const APP_VERSION = "2.0.0-dev.6";
+  const APP_VERSION = "2.0.0-dev.7";
   const IDB_NAME = "shrine-checklist"; // 写真・録音・メモ（計画書 3.3）
   const IDB_VERSION = 1;
   const IDB_OPEN_TIMEOUT_MS = 10000;   // 応答が無いまま止まるブラウザがあるため
@@ -1969,6 +1972,16 @@
       count: list.length,
     };
   }
+  // ---------- 最後のバックアップ（STEP 7-4） ----------
+  const BACKUP_REMIND_DAYS = 30;
+  // 一覧画面に出す「最後のバックアップ」。数えるのは全件の zip だけ（shrine-meta.lastBackupAt）。
+  // 戻り値：{ at: 日時 | null, remind: 30日以上たっているか }（日時が読めなければ、したことがない扱い）
+  function backupStatus(lastBackupAt, now) {
+    const t = typeof lastBackupAt === "string" ? Date.parse(lastBackupAt) : NaN;
+    if (isNaN(t)) return { at: null, remind: false };
+    return { at: lastBackupAt, remind: now.getTime() - t >= BACKUP_REMIND_DAYS * 24 * 60 * 60 * 1000 };
+  }
+
   // ---------- zip からの復元（STEP 7-3） ----------
   // zip の manifest.json を読む。1神社の zip も全件の zip も読める。
   // 戻り値：{ ok: true, manifest, visits: [{ folder, path }] }（folder：zip の中のフォルダ。"" か「フォルダ名/」）または { ok: false, error }
@@ -2295,8 +2308,13 @@
     deliverFile(`shrine-backup_raw_${stamp(new Date(), false)}.json`, raw, "auto").catch(e => logError("exportRaw", e));
   }
   function renderLastExport() {
-    const at = readMeta().lastExportAt;
-    document.getElementById("last-export").textContent = at ? `最後の書き出し：${formatDateTime(at)}` : "まだ書き出したことがありません";
+    const meta = readMeta();
+    const at = meta.lastExportAt;
+    document.getElementById("last-export").textContent = at ? `最後の書き出し（JSON）：${formatDateTime(at)}` : "まだ JSON で書き出したことがありません";
+    // 写真などまで残るのは全件の zip だけなので、「最後のバックアップ」はそれだけで数える（7-4）
+    const b = backupStatus(meta.lastBackupAt, new Date());
+    document.getElementById("last-backup").textContent = b.at ? `最後のバックアップ（全件の zip）：${formatDateTime(b.at)}` : "まだ全件の zip でバックアップしたことがありません";
+    document.getElementById("backup-remind").classList.toggle("hidden", !b.remind);
     document.getElementById("unsaved-warning").classList.toggle("hidden", !unsavedEdits);
   }
 
@@ -2438,6 +2456,11 @@
     const where = z.where;
     deliverBlob(z.name, z.blob, mode)
       .then(result => {
+        // 全件の zip を共有・保存できたら「最後のバックアップ」にする（JSON の「最後の書き出し」と同じ考え方）
+        if (result && where === "list") {
+          updateMeta({ lastBackupAt: isoLocal(new Date()) });
+          renderLastExport();
+        }
         if (zipReady !== z) return;
         if (result === "shared") setZipText(where, `${z.name} を共有しました。もう一度送るときは、もう一度押してください。`);
         else if (result === "downloaded") setZipText(where, `${z.name} をダウンロードしました（端末の「ダウンロード」に入ります）。`);
@@ -3032,7 +3055,8 @@
         L.push(`  ${k}（${count}件）`);
       });
       const meta = readMeta();
-      L.push(`最後の書き出し: ${meta.lastExportAt ? formatDateTime(meta.lastExportAt) : "なし"}`);
+      L.push(`最後の書き出し（JSON）: ${meta.lastExportAt ? formatDateTime(meta.lastExportAt) : "なし"}`);
+      L.push(`最後のバックアップ（全件の zip）: ${meta.lastBackupAt ? formatDateTime(meta.lastBackupAt) : "なし"}${backupStatus(meta.lastBackupAt, new Date()).remind ? "（30日以上前）" : ""}`);
 
       L.push("", "■ 移行ログ（直近）");
       if (migrationFailure) L.push(`今回の起動: 失敗（${migrationFailure.stage}: ${migrationFailure.error}）`);

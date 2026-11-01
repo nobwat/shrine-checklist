@@ -26,6 +26,7 @@ const EXPORTS = [
   "summarizeMedia", "deleteConfirmText", "mediaTypeCounts", "mediaBadgeText",
   "ZIP_FORMAT", "ZIP_NAME_MAX", "safeFileName", "zipDate", "zipFileName", "mediaZipPath", "memoFileText", "zipLocationNotice",
   "planVisitZip", "fillZip", "planVisitFiles", "ZIP_ALL_WARN_BYTES", "groupMediaByVisit", "mediaTotalSize", "visitFolderName", "planAllZip",
+  "BACKUP_REMIND_DAYS", "backupStatus",
   "parseZipManifest", "parseVisitJson", "planZipRestore", "zipRestoreSummary", "zipRestoreChanges",
   "restoreBackup", "parseExportFile", "compareWithExport", "compareVerdict",
   "DRAFT_RESUME_MS", "newEntryId", "newDraftEntry", "findResumableDraft", "isEmptyDraft", "staleEmptyDraftIds",
