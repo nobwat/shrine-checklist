@@ -114,6 +114,7 @@
   .zip-text.error { color: #b5413a; }
   .zip-notice { font-size: 0.72rem; color: #b5413a; margin: 0 0 0.5rem; }
   .zip-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+  .data-tools .zip-bar { text-align: left; margin: 0.6rem 0 0.4rem; }
   .draft-bar { border: 1px solid #b5665a; border-radius: 8px; padding: 0.7rem; margin: 0 0 1rem; }
   .draft-bar p { font-size: 0.75rem; color: var(--sub); margin: 0 0 0.5rem; }
   .draft-bar button {
@@ -414,6 +415,17 @@
       <div class="data-tools-buttons">
         <button class="pill-button" id="btn-export">全データ書き出し</button>
         <button class="pill-button" id="btn-import">JSONから読み込み</button>
+        <button class="pill-button" id="btn-export-zip">全件をzipで書き出し</button>
+      </div>
+      <p class="data-tools-note">JSON には文字の記録だけが入ります。写真・録音・メモまで残すときは zip で書き出してください。</p>
+      <div class="zip-bar hidden" id="list-zip-bar">
+        <p class="zip-text" id="list-zip-text"></p>
+        <p class="zip-notice hidden" id="list-zip-notice"></p>
+        <div class="zip-buttons">
+          <button class="pill-button hidden" id="list-btn-zip-share">共有／保存</button>
+          <button class="link-button hidden" id="list-btn-zip-download">ファイルとしてダウンロード</button>
+          <button class="link-button" id="list-btn-zip-close">閉じる</button>
+        </div>
       </div>
       <p class="data-tools-note" id="last-export">&nbsp;</p>
       <p class="data-tools-warning hidden" id="unsaved-warning">保存できていない編集があります（保存容量が一杯の可能性があります）。書き出しには、保存済みの内容だけが入ります。</p>
@@ -1865,39 +1877,94 @@
     }
     return "";
   }
-  // 1神社の zip の中身を決める。mediaList：メタ情報（連番の順）、blobSizes：写真・録音の id → 本体の大きさ。
-  // 本体が見つからない写真・録音は入れない（missing に id を返す）。メモは visit.json と memo.txt に入れる。
-  // 戻り値：{ name, files: [{ path, text } | { path, mediaId }], missing, notice }
-  function planVisitZip(entry, mediaList, blobSizes, appVersion, now) {
+  // 1神社分のファイル（visit.json・memo.txt・写真・録音）を決める。prefix：zip の中のフォルダ（全件の zip は「神社ごとのフォルダ/」、1神社は ""）。
+  // mediaList：メタ情報（連番の順）、blobSizes：写真・録音の id → 本体の大きさ。本体が見つからない写真・録音は入れない（missing に id を返す）。
+  // visit.json の file はフォルダの中での名前（1神社の zip と同じ形にする）。戻り値：{ files: [{ path, text, mimeType, size } | { path, mediaId, mimeType, size }], missing }
+  function planVisitFiles(entry, mediaList, blobSizes, prefix) {
     const used = new Set(["manifest.json", "visit.json", "memo.txt"]);
     const mediaFiles = [], media = [], missing = [];
     for (const m of mediaList) {
       if (m.type === "memo") { media.push({ ...m }); continue; }
       if (m.type !== "photo" && m.type !== "audio") { missing.push(m.id); continue; }
       if (!blobSizes.has(m.id)) { missing.push(m.id); continue; }
-      const path = mediaZipPath(m, used);
-      media.push({ ...m, file: path });
-      mediaFiles.push({ path, mediaId: m.id, mimeType: m.mimeType || "application/octet-stream", size: blobSizes.get(m.id) });
+      const file = mediaZipPath(m, used);
+      media.push({ ...m, file });
+      mediaFiles.push({ path: prefix + file, mediaId: m.id, mimeType: m.mimeType || "application/octet-stream", size: blobSizes.get(m.id) });
     }
     const memos = media.filter(m => m.type === "memo");
-    const texts = [{ path: "visit.json", text: JSON.stringify({ format: "shrine-checklist-visit", formatVersion: 1, entry, media }, null, 2), mimeType: "application/json" }];
-    if (memos.length) texts.push({ path: "memo.txt", text: memoFileText(memos), mimeType: "text/plain" });
-    const manifest = {
-      format: ZIP_FORMAT, formatVersion: 1, kind: "visit", appVersion, createdAt: isoLocal(now), visitIds: [entry.id],
-      files: [
-        ...texts.map(t => ({ path: t.path, mimeType: t.mimeType, size: textByteSize(t.text) })),
-        ...mediaFiles.map(f => ({ path: f.path, mimeType: f.mimeType, size: f.size })),
-      ],
-    };
+    const texts = [{ path: prefix + "visit.json", text: JSON.stringify({ format: "shrine-checklist-visit", formatVersion: 1, entry, media }, null, 2), mimeType: "application/json" }];
+    if (memos.length) texts.push({ path: prefix + "memo.txt", text: memoFileText(memos), mimeType: "text/plain" });
+    texts.forEach(t => { t.size = textByteSize(t.text); });
+    return { files: [...texts, ...mediaFiles], missing };
+  }
+  // manifest.json と、zip に入れる順のファイル一覧（manifest には manifest 自身は載せない）
+  function zipFilesWithManifest(manifestHead, files) {
+    const manifest = { ...manifestHead, files: files.map(f => ({ path: f.path, mimeType: f.mimeType, size: f.size })) };
+    return [
+      { path: "manifest.json", text: JSON.stringify(manifest, null, 2) },
+      ...files.map(f => (f.text !== undefined ? { path: f.path, text: f.text } : { path: f.path, mediaId: f.mediaId })),
+    ];
+  }
+  // 1神社の zip の中身を決める。メモは visit.json と memo.txt に入れる。
+  // 戻り値：{ name, files: [{ path, text } | { path, mediaId }], missing, notice }
+  function planVisitZip(entry, mediaList, blobSizes, appVersion, now) {
+    const v = planVisitFiles(entry, mediaList, blobSizes, "");
     return {
       name: zipFileName(entry, now),
-      files: [
-        { path: "manifest.json", text: JSON.stringify(manifest, null, 2) },
-        ...texts.map(t => ({ path: t.path, text: t.text })),
-        ...mediaFiles.map(f => ({ path: f.path, mediaId: f.mediaId })),
-      ],
-      missing,
+      files: zipFilesWithManifest({ format: ZIP_FORMAT, formatVersion: 1, kind: "visit", appVersion, createdAt: isoLocal(now), visitIds: [entry.id] }, v.files),
+      missing: v.missing,
       notice: zipLocationNotice(entry, mediaList),
+    };
+  }
+
+  // ---------- 全件の zip（STEP 7-2） ----------
+  const ZIP_ALL_WARN_BYTES = 200 * 1024 * 1024; // これを超えたら、神社ごとの書き出しをすすめる
+  // メディアを記録ごとに分け、連番の順に並べる。戻り値：記録の id → メタ情報の配列
+  function groupMediaByVisit(mediaList) {
+    const map = new Map();
+    for (const m of mediaList) {
+      if (!map.has(m.visitId)) map.set(m.visitId, []);
+      map.get(m.visitId).push(m);
+    }
+    map.forEach(list => list.sort((a, b) => (a.seq || 0) - (b.seq || 0)));
+    return map;
+  }
+  // 写真・録音の大きさの合計（メタ情報から見積もる。本体を読む前に 200MB を超えるか判断するため）
+  function mediaTotalSize(mediaList) {
+    return mediaList.reduce((sum, m) => sum + ((m.type === "photo" || m.type === "audio") && typeof m.size === "number" && m.size > 0 ? m.size : 0), 0);
+  }
+  // 神社ごとのフォルダ名：zip のファイル名から .zip を除いたもの（「YYYYMMDD_神社名」）。重なったら _2 を付ける
+  function visitFolderName(entry, now, used) {
+    const base = zipFileName(entry, now).replace(/\.zip$/, "");
+    let name = base;
+    for (let n = 2; used.has(name); n++) name = `${base}_${n}`;
+    used.add(name);
+    return name;
+  }
+  // 全件の zip の中身を決める。list：記録の配列（保存済みの内容）、mediaByVisit：groupMediaByVisit の結果。
+  // どの記録にも属さないメディアは入れない（診断画面で整理する）。ファイル名は全データ書き出しの JSON と同じ形。
+  // 戻り値：{ name, files, missing, notice, count }
+  function planAllZip(list, mediaByVisit, blobSizes, appVersion, now) {
+    const used = new Set(), folders = [], files = [], missing = [];
+    let notice = "";
+    for (const entry of list) {
+      const media = mediaByVisit.get(entry.id) || [];
+      const folder = visitFolderName(entry, now, used);
+      const v = planVisitFiles(entry, media, blobSizes, `${folder}/`);
+      folders.push({ visitId: entry.id, folder });
+      files.push(...v.files);
+      missing.push(...v.missing);
+      const n = zipLocationNotice(entry, media);
+      if (n && (!notice || /緯度/.test(n))) notice = n; // 緯度経度の文を優先する
+    }
+    return {
+      name: `shrine-backup_${stamp(now, false)}.zip`,
+      files: zipFilesWithManifest({
+        format: ZIP_FORMAT, formatVersion: 1, kind: "all", appVersion, createdAt: isoLocal(now), visitIds: list.map(e => e.id), folders,
+      }, files),
+      missing,
+      notice,
+      count: list.length,
     };
   }
   // JSZip に中身を入れる。readData(mediaId)：本体（ブラウザでは Blob）。写真・音声は無圧縮（STORE）、JSON・テキストは圧縮（DEFLATE）
@@ -2183,76 +2250,131 @@
     }
     return jszipLoading;
   }
-  let zipReady = null; // できた zip { visitId, name, blob }
-  let zipSeq = 0;      // 作っている間に閉じた・別の記録を開いたら、古い結果を捨てるための番号
-  function setZipText(text, isError) {
-    const el = document.getElementById("zip-text");
+  // zip の枠は2か所：記録の画面（1神社。where = "detail"）と一覧画面（全件。where = "list"）。同時に作るのは1つだけ
+  let zipReady = null; // できた zip { where, name, blob }
+  let zipSeq = 0;      // 作っている間に閉じた・別の画面に移ったら、古い結果を捨てるための番号
+  function zipEl(where, id) {
+    return document.getElementById((where === "list" ? "list-" : "") + id);
+  }
+  function setZipText(where, text, isError) {
+    const el = zipEl(where, "zip-text");
     el.textContent = text;
     el.classList.toggle("error", !!isError);
   }
-  function showZipButtons(ready) {
-    document.getElementById("btn-zip-share").classList.toggle("hidden", !ready);
-    document.getElementById("btn-zip-download").classList.toggle("hidden", !ready);
+  function showZipButtons(where, ready) {
+    zipEl(where, "btn-zip-share").classList.toggle("hidden", !ready);
+    zipEl(where, "btn-zip-download").classList.toggle("hidden", !ready);
   }
   function closeZipBar() {
     zipSeq++;
     zipReady = null;
-    document.getElementById("zip-bar").classList.add("hidden");
+    ["detail", "list"].forEach(w => zipEl(w, "zip-bar").classList.add("hidden"));
+  }
+  function openZipBar(where, text) {
+    closeZipBar();
+    zipEl(where, "zip-bar").classList.remove("hidden");
+    zipEl(where, "zip-notice").classList.add("hidden");
+    showZipButtons(where, false);
+    setZipText(where, text);
+    return zipSeq;
+  }
+  // 写真・録音の本体を IndexedDB から読む（1件ずつ）。戻り値：id → Blob（見つからないものは入れない）
+  async function readMediaBlobs(list, onEach) {
+    const blobs = new Map();
+    const targets = list.filter(m => m.type === "photo" || m.type === "audio");
+    for (let i = 0; i < targets.length; i++) {
+      if (onEach) onEach(i + 1, targets.length);
+      const rec = await getMediaBlob(targets[i].id);
+      if (rec && rec.blob) blobs.set(targets[i].id, rec.blob);
+    }
+    return blobs;
+  }
+  // 中身を入れて zip にし、「共有／保存」を出す。plan：planVisitZip・planAllZip の結果
+  async function finishZip(where, seq, JSZip, plan, blobs, extraText) {
+    const zip = await fillZip(new JSZip(), plan.files, (mediaId) => blobs.get(mediaId));
+    const blob = await zip.generateAsync({ type: "blob", mimeType: "application/zip", compression: "DEFLATE" }, (meta) => {
+      if (seq === zipSeq) setZipText(where, `zip を作っています… ${Math.floor(meta.percent)}%`);
+    });
+    if (seq !== zipSeq) return;
+    zipReady = { where, name: plan.name, blob };
+    const lacking = plan.missing.length ? `。写真・録音${plan.missing.length}件は本体が見つからないため入れていません` : "";
+    setZipText(where, `zip ができました（${plan.name}・${extraText}${formatMediaSize(blob.size)}）${lacking}。「共有／保存」を押してください。`, !!lacking);
+    const notice = zipEl(where, "zip-notice");
+    notice.textContent = plan.notice;
+    notice.classList.toggle("hidden", !plan.notice);
+    showZipButtons(where, true);
+  }
+  // 保存済みの内容を読む（書き出しと同じ。画面だけにある値は入れない）。読めなければ例外
+  function readStoredForZip() {
+    flushPendingSave();
+    const stored = readStored();
+    if (!stored.ok) throw new Error("記録データを読み込めません");
+    return stored.list;
   }
   async function createVisitZip() {
     if (!currentId) return;
     if (loadFailure) { alert("データを守るため保存を止めているので、zip を作れません。診断画面から全データを書き出してください。"); return; }
     const id = currentId;
-    const seq = ++zipSeq;
-    zipReady = null;
-    flushPendingSave();
-    document.getElementById("zip-bar").classList.remove("hidden");
-    document.getElementById("zip-notice").classList.add("hidden");
-    showZipButtons(false);
-    setZipText("zip を作っています…");
+    const seq = openZipBar("detail", "zip を作っています…");
     try {
-      // 保存済みの内容から作る（書き出しと同じ。画面だけにある値は入れない）
-      const stored = readStored();
-      const entry = stored.ok && stored.list.find(e => e.id === id);
-      if (!entry) throw new Error(stored.ok ? "記録が見つかりません" : "記録データを読み込めません");
+      const entry = readStoredForZip().find(e => e.id === id);
+      if (!entry) throw new Error("記録が見つかりません");
       const JSZip = await loadJSZip();
       const list = await listMediaOfVisit(id);
-      const blobs = new Map();
-      for (const m of list) {
-        if (m.type !== "photo" && m.type !== "audio") continue;
-        const rec = await getMediaBlob(m.id);
-        if (rec && rec.blob) blobs.set(m.id, rec.blob);
-      }
+      const blobs = await readMediaBlobs(list);
       const plan = planVisitZip(entry, list, new Map([...blobs].map(([k, b]) => [k, b.size])), APP_VERSION, new Date());
-      const zip = await fillZip(new JSZip(), plan.files, (mediaId) => blobs.get(mediaId));
-      const blob = await zip.generateAsync({ type: "blob", mimeType: "application/zip", compression: "DEFLATE" }, (meta) => {
-        if (seq === zipSeq) setZipText(`zip を作っています… ${Math.floor(meta.percent)}%`);
-      });
-      if (seq !== zipSeq) return;
-      zipReady = { visitId: id, name: plan.name, blob };
-      const lacking = plan.missing.length ? `。写真・録音${plan.missing.length}件は本体が見つからないため入れていません` : "";
-      setZipText(`zip ができました（${plan.name}・${formatMediaSize(blob.size)}）${lacking}。「共有／保存」を押してください。`, !!lacking);
-      const notice = document.getElementById("zip-notice");
-      notice.textContent = plan.notice;
-      notice.classList.toggle("hidden", !plan.notice);
-      showZipButtons(true);
+      await finishZip("detail", seq, JSZip, plan, blobs, "");
     } catch (e) {
       logError("zip", e);
-      if (seq === zipSeq) setZipText(`zip を作れませんでした（${e.message}）`, true);
+      if (seq === zipSeq) setZipText("detail", `zip を作れませんでした（${e.message}）`, true);
+    }
+  }
+  // 全件の zip（7-2）。神社ごとのフォルダに分ける。写真・録音の合計が 200MB を超えたら、神社ごとの書き出しをすすめる
+  async function createAllZip() {
+    if (!storageOK) { alert("このブラウザでは保存機能が使えないため、書き出せる記録がありません。"); return; }
+    if (loadFailure) { exportRaw(); return; }
+    let list, allMedia;
+    try {
+      list = readStoredForZip();
+      const db = await openMediaDB();
+      allMedia = await idbRequest(db.transaction("media", "readonly").objectStore("media").getAll());
+    } catch (e) {
+      logError("zip-all", e);
+      alert(`zip を作れませんでした（${e.message}）`);
+      return;
+    }
+    if (!list.length) { alert("書き出す記録がありません。"); return; }
+    const ids = new Set(list.map(e => e.id));
+    const mine = allMedia.filter(m => ids.has(m.visitId)); // どの記録にも属さないメディアは入れない
+    const total = mediaTotalSize(mine);
+    if (total > ZIP_ALL_WARN_BYTES && !confirm(
+      `写真・録音が合わせて約${formatMediaSize(total)}あります。大きな zip は、作っている途中で止まったり、送れなかったりすることがあります。\n`
+      + "記録の画面の「zipを作成」で、神社ごとに書き出すのがおすすめです。\nこのまま全件の zip を作りますか？")) return;
+    const seq = openZipBar("list", "zip を作っています…");
+    try {
+      const JSZip = await loadJSZip();
+      const blobs = await readMediaBlobs(mine, (i, n) => { if (seq === zipSeq) setZipText("list", `写真・録音を読み込んでいます… ${i} / ${n}`); });
+      if (seq !== zipSeq) return;
+      const plan = planAllZip(list, groupMediaByVisit(mine), new Map([...blobs].map(([k, b]) => [k, b.size])), APP_VERSION, new Date());
+      await finishZip("list", seq, JSZip, plan, blobs, `${plan.count}件・`);
+    } catch (e) {
+      logError("zip-all", e);
+      if (seq === zipSeq) setZipText("list", `zip を作れませんでした（${e.message}）`, true);
     }
   }
   // 2回目のタップ。share より前に await を置かない（deliverBlob の中で最初に share を呼ぶ）
   function deliverZip(mode) {
     const z = zipReady;
     if (!z) return;
+    const where = z.where;
     deliverBlob(z.name, z.blob, mode)
       .then(result => {
         if (zipReady !== z) return;
-        if (result === "shared") setZipText(`${z.name} を共有しました。もう一度送るときは、もう一度押してください。`);
-        else if (result === "downloaded") setZipText(`${z.name} をダウンロードしました（端末の「ダウンロード」に入ります）。`);
-        else setZipText("共有をやめました。送るときは、もう一度「共有／保存」を押してください。");
+        if (result === "shared") setZipText(where, `${z.name} を共有しました。もう一度送るときは、もう一度押してください。`);
+        else if (result === "downloaded") setZipText(where, `${z.name} をダウンロードしました（端末の「ダウンロード」に入ります）。`);
+        else setZipText(where, "共有をやめました。送るときは、もう一度「共有／保存」を押してください。");
       })
-      .catch(e => { logError("zip-share", e); setZipText(`共有／保存できませんでした（${e.message}）`, true); });
+      .catch(e => { logError("zip-share", e); setZipText(where, `共有／保存できませんでした（${e.message}）`, true); });
   }
 
   // ---------- 選択ダイアログ ----------
@@ -4339,9 +4461,12 @@
   document.getElementById("btn-back").addEventListener("click", showList);
   document.getElementById("btn-finalize").addEventListener("click", finalizeDraft);
   document.getElementById("btn-zip").addEventListener("click", () => createVisitZip().catch(e => logError("zip", e)));
-  document.getElementById("btn-zip-share").addEventListener("click", () => deliverZip("auto"));
-  document.getElementById("btn-zip-download").addEventListener("click", () => deliverZip("download"));
-  document.getElementById("btn-zip-close").addEventListener("click", closeZipBar);
+  document.getElementById("btn-export-zip").addEventListener("click", () => createAllZip().catch(e => logError("zip-all", e)));
+  for (const w of ["detail", "list"]) {
+    zipEl(w, "btn-zip-share").addEventListener("click", () => deliverZip("auto"));
+    zipEl(w, "btn-zip-download").addEventListener("click", () => deliverZip("download"));
+    zipEl(w, "btn-zip-close").addEventListener("click", closeZipBar);
+  }
   document.getElementById("btn-print").addEventListener("click", () => window.print());
   document.getElementById("btn-reset").addEventListener("click", () => {
     if (!currentId) return;

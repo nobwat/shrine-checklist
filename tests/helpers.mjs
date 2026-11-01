@@ -25,7 +25,7 @@ const EXPORTS = [
   "readMeta", "listBackups", "makeBackup", "pruneBackups", "migrateEntries", "verifyMigration", "runMigration", "recordMigration",
   "summarizeMedia", "deleteConfirmText", "mediaTypeCounts", "mediaBadgeText",
   "ZIP_FORMAT", "ZIP_NAME_MAX", "safeFileName", "zipDate", "zipFileName", "mediaZipPath", "memoFileText", "zipLocationNotice",
-  "planVisitZip", "fillZip",
+  "planVisitZip", "fillZip", "planVisitFiles", "ZIP_ALL_WARN_BYTES", "groupMediaByVisit", "mediaTotalSize", "visitFolderName", "planAllZip",
   "restoreBackup", "parseExportFile", "compareWithExport", "compareVerdict",
   "DRAFT_RESUME_MS", "newEntryId", "newDraftEntry", "findResumableDraft", "isEmptyDraft", "staleEmptyDraftIds",
   "PHOTO_LABELS", "photoLabelName", "PHOTO_MAX_EDGE_DEFAULT", "CANVAS_MAX_PIXELS", "THUMB_EDGE", "fitPhotoSize",
